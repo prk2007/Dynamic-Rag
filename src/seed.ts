@@ -1,5 +1,3 @@
-
-
 import * as lancedb from "@lancedb/lancedb";
 import minimist from 'minimist';
 import {
