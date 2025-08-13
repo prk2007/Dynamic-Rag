@@ -37,7 +37,7 @@ An HTTP-based Model Context Protocol (MCP) server that enables Cursor IDE to int
 
 Before running the server, you need to configure your OpenAI API key in the client.ts file:
 
-1. Open `/src/lancedb/client.ts`
+1. Open `src/lancedb/client.ts`
 2. Replace `{OPEN_AI_KEY}` with your actual OpenAI API key:
 ```typescript
 const OPENAI_API_KEY = "your-actual-openai-api-key-here";
@@ -137,23 +137,23 @@ npm run seed -- --dbpath /Users/username/lancedb-index --filesdir /Users/usernam
 
 ### Option 2: Python Seed Scripts
 
-Multiple Python seed scripts are available in the `Seed Script/pythonProject3` directory:
+The Python seed scripts are available in the `Seed Script` directory within the project:
 
 #### OpenAI-based Script (Recommended for compatibility)
 ```bash
-cd "Seed Script/pythonProject3"
+cd "Seed Script"
 python3 seed_openai.py --dbpath <PATH_TO_LOCAL_INDEX_DIR> --filesdir <PATH_TO_DOCS> --api-key <YOUR_OPENAI_API_KEY>
 ```
 
 #### Gemini-based Script
 ```bash
-cd "Seed Script/pythonProject3"
+cd "Seed Script"
 python3 seed_gemini.py --dbpath <PATH_TO_LOCAL_INDEX_DIR> --filesdir <PATH_TO_DOCS> --api-key <YOUR_GEMINI_API_KEY>
 ```
 
 #### Standard Python Script (Ollama models - Not compatible without modification)
 ```bash
-cd "Seed Script/pythonProject3"
+cd "Seed Script"
 python3 seed.py --dbpath <PATH_TO_LOCAL_INDEX_DIR> --filesdir <PATH_TO_DOCS> [--overwrite]
 ```
 
@@ -161,7 +161,7 @@ python3 seed.py --dbpath <PATH_TO_LOCAL_INDEX_DIR> --filesdir <PATH_TO_DOCS> [--
 
 Before running Python scripts, install dependencies:
 ```bash
-cd "Seed Script/pythonProject3"
+cd "Seed Script"
 pip install -r requirenments.txt
 ```
 
@@ -214,17 +214,16 @@ lance-mcp/
 │   ├── config.ts       # Configuration settings
 │   ├── index.ts        # HTTP MCP server entry point
 │   └── seed.ts         # TypeScript seed script
+├── Seed Script/        # Python seed scripts
+│   ├── seed.py         # Python seed script (Ollama)
+│   ├── seed_gemini.py  # Gemini-based seed script
+│   ├── seed_openai.py  # OpenAI-based seed script
+│   ├── requirenments.txt # Python dependencies
+│   └── ReadMe.md       # Python scripts documentation
 ├── sample-docs/        # Sample documents for testing
-├── dist/              # Compiled JavaScript (generated)
-├── package.json       # Node dependencies
-└── tsconfig.json      # TypeScript configuration
-
-Seed Script/
- ├── seed.py           # Python seed script (Ollama)
- ├── seed_gemini.py    # Gemini-based seed script
- ├── seed_openai.py    # OpenAI-based seed script
- ├── requirenments.txt # Python dependencies
- └── ReadMe.md        # Python scripts documentation
+├── dist/               # Compiled JavaScript (generated)
+├── package.json        # Node dependencies
+└── tsconfig.json       # TypeScript configuration
 ```
 
 ## 🔧 Development
@@ -279,6 +278,16 @@ PORT=3002 DEFAULT_DB_PATH=/path/to/db node dist/index.js
    - Consider adjusting chunk size in seed scripts
    - Process documents in batches
 
+7. **Python dependencies issues**:
+   - Make sure you're in the `Seed Script` directory when installing requirements
+   - Use virtual environment if needed:
+     ```bash
+     cd "Seed Script"
+     python3 -m venv venv
+     source venv/bin/activate  # On Windows: venv\Scripts\activate
+     pip install -r requirenments.txt
+     ```
+
 ## 📜 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
@@ -290,8 +299,9 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## 📧 Support
 
 For issues and questions:
-- GitHub Issues: [https://github.com/adiom-data/lance-mcp/issues](https://github.com/adiom-data/lance-mcp/issues)
+- GitHub Issues( Original Repo ): [https://github.com/adiom-data/lance-mcp/issues](https://github.com/adiom-data/lance-mcp/issues)
 - Author: Alex Komyagin (alex@adiom.io)
+- Prashant Khurana [ Modified to support OPEN_AI embeddings for publicly available data. ]
 
 ## 🔗 Related Links
 
