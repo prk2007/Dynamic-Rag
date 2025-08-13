@@ -174,7 +174,8 @@ class CursorMCPServer {
                 console.log('Headers:', req.headers);
                 console.log('Body:', JSON.stringify(req.body, null, 2));
                 
-                const { jsonrpc, id, method, params } = req.body;
+                // Handle Cursor's request format - params might be missing
+                const { jsonrpc, id, method, params = {} } = req.body;
                 
                 // Handle empty or malformed requests
                 if (!req.body || Object.keys(req.body).length === 0) {
@@ -189,7 +190,20 @@ class CursorMCPServer {
                     });
                 }
                 
-                // More lenient jsonrpc version check - accept both 2.0 and newer versions
+                // Validate method is present
+                if (!method) {
+                    console.log('Missing method field');
+                    return res.status(400).json({
+                        jsonrpc: "2.0",
+                        id: id || null,
+                        error: {
+                            code: -32600,
+                            message: "Invalid Request: Missing method field"
+                        }
+                    });
+                }
+                
+                // More lenient jsonrpc version check - accept both 2.0 and newer versions, or missing
                 if (jsonrpc && jsonrpc !== "2.0" && !jsonrpc.startsWith("2.")) {
                     console.log('Invalid jsonrpc version:', jsonrpc);
                     return res.status(400).json({
@@ -203,7 +217,7 @@ class CursorMCPServer {
                 }
 
                 let result;
-                console.log(`Processing MCP method: ${method}`);
+                console.log(`Processing MCP method: ${method} with params:`, params);
                 
                 switch (method) {
                     case 'initialize':
@@ -241,8 +255,19 @@ class CursorMCPServer {
                         console.log('Handling tools/list request');
                         const tools = this.toolRegistry.getToolSchemas();
                         console.log(`Found ${tools.length} tools:`, tools.map(t => t.name));
+                        console.log('Tool schemas:', JSON.stringify(tools, null, 2));
                         result = {
                             tools: tools
+                        };
+                        break;
+                        
+                    case 'prompts/list':
+                        console.log('Handling prompts/list request'); 
+                        // For now, return empty prompts array - you can add prompts later
+                        const prompts = [];
+                        console.log(`Found ${prompts.length} prompts:`, prompts.map(p => p.name || 'unnamed'));
+                        result = {
+                            prompts: prompts
                         };
                         break;
                         
