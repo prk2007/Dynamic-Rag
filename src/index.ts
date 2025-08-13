@@ -16,7 +16,7 @@ import * as defaults from './config.js';
 // Configuration
 const CONFIG = {
     PORT: process.env.PORT || 3001,
-    DEFAULT_DB_PATH: process.env.DEFAULT_DB_PATH || '/Users/prashantkhurana/Documents/LanceDB Insdex',
+    DEFAULT_DB_PATH: process.env.DEFAULT_DB_PATH || '{path_to_lanceDB}',
     ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS?.split(',') || [
         'https://claude.ai',
         'vscode-webview://*',
