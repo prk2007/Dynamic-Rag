@@ -1,0 +1,149 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: dynamicrag-postgres
+    environment:
+      POSTGRES_DB: dynamic_rag
+      POSTGRES_USER: rag_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag_user -d dynamic_rag"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dynamicrag-network
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: dynamicrag-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - dynamicrag-network
+
+  # Dynamic RAG API Server
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dynamicrag-api
+    ports:
+      - "${PORT:-3001}:3001"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 3001
+      # Database
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: rag_user
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_NAME: dynamic_rag
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # JWT
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-this}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-your-refresh-token-secret}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-24h}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+      # Encryption
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      # OpenAI
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # Storage
+      CUSTOMERS_DB_PATH: /app/data/customers
+      DEFAULT_DB_PATH: /app/data/default
+      # AWS S3 (optional)
+      AWS_REGION: ${AWS_REGION}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      S3_BUCKET: ${S3_BUCKET}
+      # Admin
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-ChangeThisPassword123!}
+      # Features
+      ENABLE_METRICS: ${ENABLE_METRICS:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - dynamicrag-network
+    restart: unless-stopped
+
+  # Queue Worker (for document processing)
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dynamicrag-worker
+    command: ["node", "dist/workers/document-worker.js"]
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      # Database
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: rag_user
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_NAME: dynamic_rag
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # OpenAI
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # Storage
+      CUSTOMERS_DB_PATH: /app/data/customers
+      DEFAULT_DB_PATH: /app/data/default
+      # AWS S3
+      AWS_REGION: ${AWS_REGION}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      S3_BUCKET: ${S3_BUCKET}
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - dynamicrag-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  dynamicrag-network:
+    driver: bridge
