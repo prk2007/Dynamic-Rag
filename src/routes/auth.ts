@@ -4,6 +4,8 @@ import {
   findCustomerByEmail,
   findCustomerById,
   getCustomerJWTSecrets,
+  updateEmailVerificationToken,
+  markEmailAsVerified,
 } from '../models/customer.js';
 import { verifyPassword, validatePassword } from '../auth/password.js';
 import {
@@ -13,6 +15,22 @@ import {
   revokeAllTokens,
 } from '../auth/jwt.js';
 import { authenticate } from '../middleware/authenticate.js';
+import {
+  generateVerificationToken,
+  getExpirationTimestamp,
+  verifyToken as verifyEmailToken,
+  checkResendRateLimit,
+} from '../services/verification.service.js';
+import { createEmailVerification } from '../models/email-verification.js';
+import { emailService } from '../services/email/email.service.js';
+import {
+  generateVerificationEmail,
+  generateVerificationEmailText,
+} from '../services/email/templates/verification.html.js';
+import {
+  generateWelcomeEmail,
+  generateWelcomeEmailText,
+} from '../services/email/templates/welcome.html.js';
 
 const router = express.Router();
 
@@ -64,7 +82,7 @@ router.post('/signup', async (req: Request, res: Response) => {
       return;
     }
 
-    // Create customer (this generates unique JWT secrets)
+    // Create customer (status: pending_verification, email_verified: false)
     const customer = await createCustomer({
       email,
       password,
@@ -72,22 +90,59 @@ router.post('/signup', async (req: Request, res: Response) => {
       openai_api_key,
     });
 
-    // Get customer's JWT secrets
-    const { jwtSecret, jwtRefreshSecret } = await getCustomerJWTSecrets(customer.id);
+    // Generate verification token
+    const verificationToken = generateVerificationToken();
+    const expiresAt = getExpirationTimestamp();
 
-    // Generate tokens with customer's secrets
-    const tokens = await generateTokenPair(customer.id, customer.email, jwtSecret, jwtRefreshSecret);
+    // Store verification token in database
+    await updateEmailVerificationToken(customer.id, verificationToken, expiresAt);
+
+    // Log verification attempt in email_verifications table
+    await createEmailVerification({
+      customer_id: customer.id,
+      token: verificationToken,
+      expires_at: expiresAt,
+      ip_address: req.ip,
+      user_agent: req.headers['user-agent'],
+    });
+
+    // Send verification email
+    const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email?token=${verificationToken}`;
+
+    const htmlContent = generateVerificationEmail({
+      email: customer.email,
+      verificationUrl,
+      companyName: customer.company_name || undefined,
+    });
+
+    const textContent = generateVerificationEmailText({
+      email: customer.email,
+      verificationUrl,
+      companyName: customer.company_name || undefined,
+    });
+
+    try {
+      await emailService.send({
+        to: customer.email,
+        subject: 'Verify Your Email - Dynamic RAG',
+        html: htmlContent,
+        text: textContent,
+      });
+    } catch (emailError) {
+      console.error('Failed to send verification email:', emailError);
+      // Don't fail signup if email fails, customer can resend
+    }
 
     res.status(201).json({
-      message: 'Account created successfully',
+      message: 'Account created successfully. Please check your email to verify your account.',
       customer: {
         id: customer.id,
         email: customer.email,
         company_name: customer.company_name,
-        api_key: customer.api_key,
         created_at: customer.created_at,
+        status: customer.status,
+        email_verified: customer.email_verified,
       },
-      ...tokens,
     });
   } catch (error) {
     console.error('Signup error:', error);
@@ -125,6 +180,15 @@ router.post('/login', async (req: Request, res: Response) => {
       return;
     }
 
+    // Check email verification (CRITICAL for security)
+    if (!customer.email_verified) {
+      res.status(403).json({
+        error: 'Email Not Verified',
+        message: 'Please verify your email address before logging in. Check your inbox for the verification link.',
+      });
+      return;
+    }
+
     // Check account status
     if (customer.status !== 'active') {
       res.status(403).json({
@@ -134,7 +198,15 @@ router.post('/login', async (req: Request, res: Response) => {
       return;
     }
 
-    // Verify password
+    // Verify password (check if password exists - for future SSO compatibility)
+    if (!customer.password_hash) {
+      res.status(400).json({
+        error: 'Bad Request',
+        message: 'This account uses SSO authentication. Please login with your SSO provider.',
+      });
+      return;
+    }
+
     const valid = await verifyPassword(password, customer.password_hash);
     if (!valid) {
       res.status(401).json({
@@ -157,6 +229,9 @@ router.post('/login', async (req: Request, res: Response) => {
         email: customer.email,
         company_name: customer.company_name,
         api_key: customer.api_key,
+        status: customer.status,
+        email_verified: customer.email_verified,
+        created_at: customer.created_at,
       },
       ...tokens,
     });
@@ -268,6 +343,7 @@ router.get('/me', authenticate, async (req: Request, res: Response) => {
         company_name: customer.company_name,
         api_key: customer.api_key,
         status: customer.status,
+        email_verified: customer.email_verified,
         created_at: customer.created_at,
       },
       config: req.customerConfig,
@@ -277,6 +353,175 @@ router.get('/me', authenticate, async (req: Request, res: Response) => {
     res.status(500).json({
       error: 'Internal Server Error',
       message: 'Failed to get user info',
+    });
+  }
+});
+
+/**
+ * GET /api/auth/verify-email
+ * Verify email address with token
+ */
+router.get('/verify-email', async (req: Request, res: Response) => {
+  try {
+    const { token } = req.query;
+
+    if (!token || typeof token !== 'string') {
+      res.status(400).json({
+        error: 'Bad Request',
+        message: 'Verification token is required',
+      });
+      return;
+    }
+
+    // Verify the token
+    const result = await verifyEmailToken(token, req.ip, req.headers['user-agent']);
+
+    if (!result.success) {
+      res.status(400).json({
+        error: 'Verification Failed',
+        message: result.error || 'Invalid or expired token',
+      });
+      return;
+    }
+
+    // Send welcome email
+    const customer = await findCustomerById(result.customerId!);
+    if (customer) {
+      const dashboardUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+      const htmlContent = generateWelcomeEmail({
+        email: customer.email,
+        companyName: customer.company_name || undefined,
+        dashboardUrl,
+        apiKey: customer.api_key,
+      });
+
+      const textContent = generateWelcomeEmailText({
+        email: customer.email,
+        companyName: customer.company_name || undefined,
+        dashboardUrl,
+        apiKey: customer.api_key,
+      });
+
+      try {
+        await emailService.send({
+          to: customer.email,
+          subject: 'Welcome to Dynamic RAG - Account Activated',
+          html: htmlContent,
+          text: textContent,
+        });
+      } catch (emailError) {
+        console.error('Failed to send welcome email:', emailError);
+        // Don't fail verification if welcome email fails
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Email verified successfully! Your account is now active.',
+      email: result.email,
+    });
+  } catch (error) {
+    console.error('Verify email error:', error);
+    res.status(500).json({
+      error: 'Internal Server Error',
+      message: 'Failed to verify email',
+    });
+  }
+});
+
+/**
+ * POST /api/auth/resend-verification
+ * Resend verification email (rate limited)
+ */
+router.post('/resend-verification', async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      res.status(400).json({
+        error: 'Bad Request',
+        message: 'Email is required',
+      });
+      return;
+    }
+
+    // Find customer
+    const customer = await findCustomerByEmail(email);
+    if (!customer) {
+      // Don't reveal if email exists or not (security best practice)
+      res.json({
+        message: 'If this email is registered, a verification link has been sent.',
+      });
+      return;
+    }
+
+    // Check if already verified
+    if (customer.email_verified) {
+      res.status(400).json({
+        error: 'Already Verified',
+        message: 'This email address is already verified.',
+      });
+      return;
+    }
+
+    // Check rate limit
+    const rateLimitCheck = await checkResendRateLimit(email);
+    if (!rateLimitCheck.canResend) {
+      res.status(429).json({
+        error: 'Too Many Requests',
+        message: `You can request a new verification email after ${rateLimitCheck.retryAfter?.toLocaleTimeString()}`,
+        retryAfter: rateLimitCheck.retryAfter,
+      });
+      return;
+    }
+
+    // Generate new verification token
+    const verificationToken = generateVerificationToken();
+    const expiresAt = getExpirationTimestamp();
+
+    // Store new token
+    await updateEmailVerificationToken(customer.id, verificationToken, expiresAt);
+
+    // Log verification attempt
+    await createEmailVerification({
+      customer_id: customer.id,
+      token: verificationToken,
+      expires_at: expiresAt,
+      ip_address: req.ip,
+      user_agent: req.headers['user-agent'],
+    });
+
+    // Send verification email
+    const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email?token=${verificationToken}`;
+
+    const htmlContent = generateVerificationEmail({
+      email: customer.email,
+      verificationUrl,
+      companyName: customer.company_name || undefined,
+    });
+
+    const textContent = generateVerificationEmailText({
+      email: customer.email,
+      verificationUrl,
+      companyName: customer.company_name || undefined,
+    });
+
+    await emailService.send({
+      to: customer.email,
+      subject: 'Verify Your Email - Dynamic RAG',
+      html: htmlContent,
+      text: textContent,
+    });
+
+    res.json({
+      message: 'Verification email sent successfully. Please check your inbox.',
+    });
+  } catch (error) {
+    console.error('Resend verification error:', error);
+    res.status(500).json({
+      error: 'Internal Server Error',
+      message: 'Failed to resend verification email',
     });
   }
 });

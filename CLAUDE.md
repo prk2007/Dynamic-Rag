@@ -492,7 +492,40 @@ KEYS bull:document-processing:*
 - [x] API endpoints: signup, login, refresh, logout
 - [x] Health checks and monitoring
 
-### Phase 2: Document Processing 🚧 NEXT
+### Phase 1.5: Email Verification 🚧 IN PROGRESS
+
+- [x] Database schema updated (email verification fields)
+- [ ] Email service integration (SendGrid)
+- [ ] Verification token generation and validation
+- [ ] Email templates (verification, welcome)
+- [ ] Updated signup flow (send verification email)
+- [ ] Updated login flow (check email verification)
+- [ ] Resend verification endpoint
+- [ ] Testing and documentation
+
+**Note**: Database schema already includes MFA and SSO tables for future phases
+
+### Phase 1.6: MFA/2FA 📋 PLANNED
+
+- [x] Database schema ready (MFA tables exist)
+- [x] Complete design document
+- [ ] TOTP implementation (Google Authenticator compatible)
+- [ ] QR code generation
+- [ ] Backup codes system
+- [ ] Trusted device management
+- [ ] MFA setup and verification endpoints
+
+### Phase 1.7: SSO Integration 📋 PLANNED
+
+- [x] Database schema ready (SSO tables exist)
+- [x] Complete design document
+- [ ] Google OAuth integration
+- [ ] Microsoft OAuth integration
+- [ ] GitHub OAuth integration
+- [ ] Account linking functionality
+- [ ] Profile sync
+
+### Phase 2: Document Processing 📋 NEXT
 
 - [ ] Multi-tenant LanceDB manager with connection pooling
 - [ ] Document upload API (S3 integration)
@@ -530,13 +563,16 @@ KEYS bull:document-processing:*
 
 ## Important Notes for AI Assistants
 
-### When Working on Phase 1 (Current)
+### When Working on Phase 1.5 (Current - Email Verification)
 
 - **Main server**: `src/server.ts` (NOT `src/index.ts`)
 - **Authentication**: Always use per-customer JWT secrets
 - **Middleware**: `authenticate.ts` is async (uses `await verifyAccessToken()`)
 - **Database**: All customer operations must include encryption/decryption
 - **Security**: Never store secrets unencrypted
+- **Email Verification**: Always check `email_verified` before allowing login
+- **Forward Compatibility**: Code must support future MFA and SSO (password_hash is nullable)
+- **Status Flow**: `pending_verification` → `active` (after email verification)
 
 ### When Starting Phase 2
 

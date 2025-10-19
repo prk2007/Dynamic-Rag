@@ -6,13 +6,23 @@ import crypto from 'crypto';
 export interface Customer {
   id: string;
   email: string;
-  password_hash: string;
+  password_hash: string | null; // Nullable for SSO-only accounts
   company_name: string | null;
   api_key: string;
   openai_api_key: string | null;
   jwt_secret: string; // Encrypted
   jwt_refresh_secret: string; // Encrypted
-  status: 'active' | 'suspended' | 'deleted';
+  // Email verification fields
+  email_verified: boolean;
+  email_verification_token: string | null;
+  email_verification_expires: Date | null;
+  // MFA fields (dormant until Phase 1.6)
+  mfa_enabled: boolean;
+  mfa_secret: string | null;
+  mfa_backup_codes: string | null;
+  // Profile
+  avatar_url: string | null;
+  status: 'pending_verification' | 'active' | 'suspended' | 'deleted';
   created_at: Date;
   updated_at: Date;
 }
@@ -71,10 +81,10 @@ export async function createCustomer(data: CreateCustomerData): Promise<Customer
   // Encrypt OpenAI key if provided
   const encrypted_openai_key = openai_api_key ? encrypt(openai_api_key) : null;
 
-  // Insert customer
+  // Insert customer (status: pending_verification for email verification flow)
   const result = await query<Customer>(
-    `INSERT INTO customers (email, password_hash, company_name, api_key, openai_api_key, jwt_secret, jwt_refresh_secret, status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
+    `INSERT INTO customers (email, password_hash, company_name, api_key, openai_api_key, jwt_secret, jwt_refresh_secret, status, email_verified)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending_verification', false)
      RETURNING *`,
     [email, password_hash, company_name || null, api_key, encrypted_openai_key, encrypted_jwt_secret, encrypted_jwt_refresh_secret]
   );
@@ -261,4 +271,50 @@ export async function deleteCustomer(customerId: string): Promise<void> {
     `UPDATE customers SET status = 'deleted', updated_at = NOW() WHERE id = $1`,
     [customerId]
   );
+}
+
+/**
+ * Update email verification token for customer
+ */
+export async function updateEmailVerificationToken(
+  customerId: string,
+  token: string,
+  expiresAt: Date
+): Promise<void> {
+  await query(
+    `UPDATE customers
+     SET email_verification_token = $1,
+         email_verification_expires = $2,
+         updated_at = NOW()
+     WHERE id = $3`,
+    [token, expiresAt, customerId]
+  );
+}
+
+/**
+ * Mark customer email as verified
+ */
+export async function markEmailAsVerified(customerId: string): Promise<void> {
+  await query(
+    `UPDATE customers
+     SET email_verified = true,
+         email_verification_token = NULL,
+         email_verification_expires = NULL,
+         status = 'active',
+         updated_at = NOW()
+     WHERE id = $1`,
+    [customerId]
+  );
+}
+
+/**
+ * Check if customer email is verified
+ */
+export async function isEmailVerified(customerId: string): Promise<boolean> {
+  const result = await query<{ email_verified: boolean }>(
+    `SELECT email_verified FROM customers WHERE id = $1`,
+    [customerId]
+  );
+
+  return result.rows[0]?.email_verified || false;
 }

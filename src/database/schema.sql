@@ -1,22 +1,38 @@
 -- Dynamic RAG PostgreSQL Schema
--- Phase 1: Core Infrastructure
+-- Phase 1: Core Infrastructure + Enhanced Authentication
 
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- =====================================================
--- CUSTOMERS TABLE
+-- CUSTOMERS TABLE (UPDATED with Email Verification & MFA)
 -- =====================================================
 CREATE TABLE IF NOT EXISTS customers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
+    password_hash VARCHAR(255), -- Nullable for SSO-only accounts
     company_name VARCHAR(255),
     api_key VARCHAR(64) UNIQUE NOT NULL,
     openai_api_key TEXT, -- Encrypted
     jwt_secret TEXT NOT NULL, -- Per-customer JWT secret (encrypted)
     jwt_refresh_secret TEXT NOT NULL, -- Per-customer refresh token secret (encrypted)
-    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'suspended', 'deleted')),
+
+    -- Email Verification
+    email_verified BOOLEAN DEFAULT false,
+    email_verification_token VARCHAR(255),
+    email_verification_expires TIMESTAMP,
+
+    -- MFA/2FA
+    mfa_enabled BOOLEAN DEFAULT false,
+    mfa_secret TEXT, -- Encrypted TOTP secret
+    mfa_backup_codes TEXT, -- Encrypted JSON array of hashed codes
+
+    -- Profile
+    avatar_url TEXT,
+
+    -- Status
+    status VARCHAR(30) DEFAULT 'pending_verification' CHECK (status IN ('pending_verification', 'active', 'suspended', 'deleted')),
+
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -24,6 +40,109 @@ CREATE TABLE IF NOT EXISTS customers (
 CREATE INDEX idx_customers_email ON customers(email);
 CREATE INDEX idx_customers_api_key ON customers(api_key);
 CREATE INDEX idx_customers_status ON customers(status);
+CREATE INDEX idx_customers_verification_token ON customers(email_verification_token);
+
+-- =====================================================
+-- EMAIL VERIFICATIONS TABLE
+-- =====================================================
+CREATE TABLE IF NOT EXISTS email_verifications (
+    id BIGSERIAL PRIMARY KEY,
+    customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+    token VARCHAR(255) NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    verified_at TIMESTAMP,
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_email_verifications_token ON email_verifications(token);
+CREATE INDEX idx_email_verifications_customer ON email_verifications(customer_id);
+CREATE INDEX idx_email_verifications_expires ON email_verifications(expires_at);
+
+-- =====================================================
+-- MFA TRUSTED DEVICES TABLE
+-- =====================================================
+CREATE TABLE IF NOT EXISTS mfa_trusted_devices (
+    id BIGSERIAL PRIMARY KEY,
+    customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+    device_fingerprint VARCHAR(255) NOT NULL,
+    device_name VARCHAR(255),
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    trusted_until TIMESTAMP NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    last_used_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(customer_id, device_fingerprint)
+);
+
+CREATE INDEX idx_mfa_trusted_devices_customer ON mfa_trusted_devices(customer_id);
+CREATE INDEX idx_mfa_trusted_devices_fingerprint ON mfa_trusted_devices(device_fingerprint);
+CREATE INDEX idx_mfa_trusted_devices_expires ON mfa_trusted_devices(trusted_until);
+
+-- =====================================================
+-- MFA EVENTS TABLE (Audit Log)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS mfa_events (
+    id BIGSERIAL PRIMARY KEY,
+    customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+    event_type VARCHAR(50) NOT NULL, -- setup, enable, disable, verify_success, verify_fail, backup_used
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    success BOOLEAN,
+    error_message TEXT,
+    metadata JSONB,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_mfa_events_customer ON mfa_events(customer_id);
+CREATE INDEX idx_mfa_events_type ON mfa_events(event_type);
+CREATE INDEX idx_mfa_events_created ON mfa_events(created_at DESC);
+
+-- =====================================================
+-- SSO PROVIDERS TABLE
+-- =====================================================
+CREATE TABLE IF NOT EXISTS sso_providers (
+    id BIGSERIAL PRIMARY KEY,
+    customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+    provider VARCHAR(50) NOT NULL, -- google, microsoft, github, etc.
+    provider_user_id VARCHAR(255) NOT NULL,
+    provider_email VARCHAR(255),
+    provider_name VARCHAR(255),
+    provider_avatar TEXT,
+    access_token TEXT, -- Encrypted
+    refresh_token TEXT, -- Encrypted
+    token_expires_at TIMESTAMP,
+    profile_data JSONB, -- Raw profile data from provider
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(provider, provider_user_id)
+);
+
+CREATE INDEX idx_sso_providers_customer ON sso_providers(customer_id);
+CREATE INDEX idx_sso_providers_provider ON sso_providers(provider, provider_user_id);
+CREATE INDEX idx_sso_providers_email ON sso_providers(provider_email);
+
+-- =====================================================
+-- SSO EVENTS TABLE (Audit Log)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS sso_events (
+    id BIGSERIAL PRIMARY KEY,
+    customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+    provider VARCHAR(50) NOT NULL,
+    event_type VARCHAR(50) NOT NULL, -- login, link, unlink, profile_sync
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    success BOOLEAN,
+    error_message TEXT,
+    metadata JSONB,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_sso_events_customer ON sso_events(customer_id);
+CREATE INDEX idx_sso_events_provider ON sso_events(provider);
+CREATE INDEX idx_sso_events_type ON sso_events(event_type);
+CREATE INDEX idx_sso_events_created ON sso_events(created_at DESC);
 
 -- =====================================================
 -- CUSTOMER CONFIGURATION TABLE
@@ -187,9 +306,98 @@ CREATE TRIGGER update_customer_config_updated_at BEFORE UPDATE ON customer_confi
 CREATE TRIGGER update_documents_updated_at BEFORE UPDATE ON documents
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+CREATE TRIGGER update_sso_providers_updated_at BEFORE UPDATE ON sso_providers
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- =====================================================
+-- SECURITY VIEWS (for monitoring)
+-- =====================================================
+
+-- View for monitoring failed authentication attempts
+CREATE OR REPLACE VIEW failed_auth_attempts AS
+SELECT
+    customer_id,
+    COUNT(*) as attempt_count,
+    MAX(created_at) as last_attempt,
+    ip_address,
+    user_agent
+FROM mfa_events
+WHERE success = false
+    AND event_type IN ('verify_fail')
+    AND created_at > NOW() - INTERVAL '1 hour'
+GROUP BY customer_id, ip_address, user_agent
+HAVING COUNT(*) >= 5;
+
+-- View for customers with MFA enabled
+CREATE OR REPLACE VIEW customers_with_mfa AS
+SELECT
+    c.id,
+    c.email,
+    c.company_name,
+    c.mfa_enabled,
+    c.email_verified,
+    COUNT(DISTINCT mtd.id) as trusted_devices_count,
+    COUNT(DISTINCT sp.id) as sso_providers_count
+FROM customers c
+LEFT JOIN mfa_trusted_devices mtd ON c.id = mtd.customer_id AND mtd.trusted_until > NOW()
+LEFT JOIN sso_providers sp ON c.id = sp.customer_id
+WHERE c.mfa_enabled = true
+GROUP BY c.id, c.email, c.company_name, c.mfa_enabled, c.email_verified;
+
+-- =====================================================
+-- CLEANUP JOBS (to be run periodically)
+-- =====================================================
+
+-- Function to cleanup expired email verification tokens
+CREATE OR REPLACE FUNCTION cleanup_expired_verifications()
+RETURNS INTEGER AS $$
+DECLARE
+    deleted_count INTEGER;
+BEGIN
+    DELETE FROM email_verifications
+    WHERE expires_at < NOW() AND verified_at IS NULL;
+
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    RETURN deleted_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to cleanup expired MFA trusted devices
+CREATE OR REPLACE FUNCTION cleanup_expired_trusted_devices()
+RETURNS INTEGER AS $$
+DECLARE
+    deleted_count INTEGER;
+BEGIN
+    DELETE FROM mfa_trusted_devices
+    WHERE trusted_until < NOW();
+
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    RETURN deleted_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to cleanup old audit logs (keep last 90 days)
+CREATE OR REPLACE FUNCTION cleanup_old_audit_logs()
+RETURNS TABLE(mfa_events_deleted INTEGER, sso_events_deleted INTEGER) AS $$
+DECLARE
+    mfa_deleted INTEGER;
+    sso_deleted INTEGER;
+BEGIN
+    DELETE FROM mfa_events
+    WHERE created_at < NOW() - INTERVAL '90 days';
+    GET DIAGNOSTICS mfa_deleted = ROW_COUNT;
+
+    DELETE FROM sso_events
+    WHERE created_at < NOW() - INTERVAL '90 days';
+    GET DIAGNOSTICS sso_deleted = ROW_COUNT;
+
+    RETURN QUERY SELECT mfa_deleted, sso_deleted;
+END;
+$$ LANGUAGE plpgsql;
+
 -- =====================================================
 -- INITIAL DATA / SEED
 -- =====================================================
 
 -- Note: Admin user creation will be handled by setup script
--- This is just the schema
+-- This is the enhanced schema with email verification, MFA, and SSO support

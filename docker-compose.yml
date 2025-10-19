@@ -80,6 +80,13 @@ services:
       # Features
       ENABLE_METRICS: ${ENABLE_METRICS:-true}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Email Configuration
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      EMAIL_FROM: ${EMAIL_FROM:-noreply@yourdomain.com}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Dynamic RAG}
+      EMAIL_VERIFICATION_URL: ${EMAIL_VERIFICATION_URL:-http://localhost:3001/api/auth/verify-email}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      EMAIL_RESEND_LIMIT_PER_HOUR: ${EMAIL_RESEND_LIMIT_PER_HOUR:-3}
     volumes:
       - ./data:/app/data
     depends_on:
