@@ -3,6 +3,8 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
 import { ROUTES } from '../../utils/constants';
 import { Spinner } from '../ui/Spinner';
+import { TokenStorage } from '../../utils/storage';
+import { isTokenExpired } from '../../utils/jwt';
 
 interface ProtectedRouteProps {
   children: ReactNode;
@@ -13,12 +15,37 @@ export const ProtectedRoute = ({
   children,
   requireVerification = true,
 }: ProtectedRouteProps) => {
-  const { isAuthenticated, isLoading, user, initialize } = useAuthStore();
+  const { isAuthenticated, isLoading, user, initialize, logout } = useAuthStore();
   const location = useLocation();
 
   useEffect(() => {
     initialize();
   }, [initialize]);
+
+  useEffect(() => {
+    // Check token expiration on route mount and periodically
+    const checkTokenExpiration = () => {
+      const accessToken = TokenStorage.getAccessToken();
+      const refreshToken = TokenStorage.getRefreshToken();
+
+      // If both tokens are expired, logout
+      if (
+        (!accessToken || isTokenExpired(accessToken, 0)) &&
+        (!refreshToken || isTokenExpired(refreshToken, 0))
+      ) {
+        console.log('Both tokens expired, logging out from ProtectedRoute');
+        logout();
+      }
+    };
+
+    // Check immediately
+    checkTokenExpiration();
+
+    // Check every 5 minutes
+    const interval = setInterval(checkTokenExpiration, 5 * 60 * 1000);
+
+    return () => clearInterval(interval);
+  }, [logout]);
 
   // Show loading spinner while checking authentication
   if (isLoading) {

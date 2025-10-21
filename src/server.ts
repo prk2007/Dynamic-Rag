@@ -3,6 +3,8 @@ import express from 'express';
 import cors from 'cors';
 import { testConnection } from './database/connection.js';
 import authRoutes from './routes/auth.js';
+import documentRoutes from './routes/documents.js';
+import profileRoutes from './routes/profile.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -39,6 +41,8 @@ app.get('/health', async (req, res) => {
 
 // API Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/documents', documentRoutes);
+app.use('/api/profile', profileRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -62,6 +66,8 @@ app.listen(PORT, () => {
   console.log(`🚀 Dynamic RAG API Server running on port ${PORT}`);
   console.log(`📋 Health check: http://localhost:${PORT}/health`);
   console.log(`🔐 Auth endpoints: http://localhost:${PORT}/api/auth/*`);
+  console.log(`📄 Document endpoints: http://localhost:${PORT}/api/documents/*`);
+  console.log(`👤 Profile endpoints: http://localhost:${PORT}/api/profile/*`);
 });
 
 // Graceful shutdown

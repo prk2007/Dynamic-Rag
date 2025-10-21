@@ -9,6 +9,10 @@ declare global {
       customerId?: string;
       customerEmail?: string;
       customerConfig?: any;
+      user?: {
+        id: string;
+        email: string;
+      };
     }
   }
 }
@@ -73,6 +77,10 @@ export async function authenticate(
     req.customerId = customer.id;
     req.customerEmail = customer.email;
     req.customerConfig = config;
+    req.user = {
+      id: customer.id,
+      email: customer.email,
+    };
 
     next();
   } catch (error) {

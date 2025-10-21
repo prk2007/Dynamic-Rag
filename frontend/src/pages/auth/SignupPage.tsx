@@ -6,7 +6,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { signupSchema, SignupFormData } from '../../utils/validators';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
-import { ROUTES, APP_NAME } from '../../utils/constants';
+import { ROUTES } from '../../utils/constants';
 
 export const SignupPage = () => {
   const { signup } = useAuth();

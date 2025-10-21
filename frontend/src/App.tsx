@@ -10,6 +10,8 @@ import { VerificationPendingPage } from './pages/auth/VerificationPendingPage';
 import { DashboardPage } from './pages/dashboard/DashboardPage';
 import { ProfilePage } from './pages/dashboard/ProfilePage';
 import { ApiKeysPage } from './pages/dashboard/ApiKeysPage';
+import { DocumentsPage } from './pages/dashboard/DocumentsPage';
+import { UploadPage } from './pages/dashboard/UploadPage';
 import { useAuthStore } from './store/authStore';
 import { ROUTES } from './utils/constants';
 
@@ -92,6 +94,26 @@ function App() {
             <ProtectedRoute>
               <DashboardLayout>
                 <ApiKeysPage />
+              </DashboardLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path={ROUTES.DOCUMENTS}
+          element={
+            <ProtectedRoute>
+              <DashboardLayout>
+                <DocumentsPage />
+              </DashboardLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path={ROUTES.DOCUMENTS_UPLOAD}
+          element={
+            <ProtectedRoute>
+              <DashboardLayout>
+                <UploadPage />
               </DashboardLayout>
             </ProtectedRoute>
           }

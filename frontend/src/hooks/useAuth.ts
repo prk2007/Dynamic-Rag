@@ -75,11 +75,10 @@ export const useAuth = () => {
   const verifyEmail = async (token: string) => {
     try {
       const response = await authService.verifyEmail(token);
-      toast.success(response.message);
+      // Don't show toast here - VerifyEmailPage shows a success UI
       return response;
     } catch (error: any) {
-      const errorMessage = error.response?.data?.message || 'Verification failed';
-      toast.error(errorMessage);
+      // Don't show toast here - VerifyEmailPage shows an error UI
       throw error;
     }
   };

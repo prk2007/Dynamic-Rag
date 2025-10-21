@@ -36,6 +36,9 @@ COPY --from=builder /app/dist ./dist
 # Create data directories
 RUN mkdir -p /app/data/customers /app/data/default
 
+# Create dummy file for pdf-parse bug workaround
+RUN mkdir -p /app/test/data && touch /app/test/data/05-versions-space.pdf
+
 # Set environment
 ENV NODE_ENV=production
 

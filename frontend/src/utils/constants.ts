@@ -15,6 +15,8 @@ export const ROUTES = {
   PROFILE: '/profile',
   API_KEYS: '/api-keys',
   SETTINGS: '/settings',
+  DOCUMENTS: '/documents',
+  DOCUMENTS_UPLOAD: '/documents/upload',
 } as const;
 
 export const API_ENDPOINTS = {
@@ -26,5 +28,20 @@ export const API_ENDPOINTS = {
     ME: '/api/auth/me',
     VERIFY_EMAIL: '/api/auth/verify-email',
     RESEND_VERIFICATION: '/api/auth/resend-verification',
+  },
+  DOCUMENTS: {
+    LIST: '/api/documents',
+    UPLOAD: '/api/documents/upload',
+    UPLOAD_URL: '/api/documents/url',
+    GET: (id: string) => `/api/documents/${id}`,
+    STATUS: (id: string) => `/api/documents/${id}/status`,
+    DOWNLOAD: (id: string) => `/api/documents/${id}/download`,
+    DELETE: (id: string) => `/api/documents/${id}`,
+    STATS: '/api/documents/stats',
+  },
+  PROFILE: {
+    GET: '/api/profile',
+    UPDATE_OPENAI_KEY: '/api/profile/openai-key',
+    OPENAI_KEY_STATUS: '/api/profile/openai-key/status',
   },
 } as const;

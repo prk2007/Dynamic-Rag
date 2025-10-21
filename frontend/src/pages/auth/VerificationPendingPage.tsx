@@ -4,7 +4,7 @@ import { EnvelopeIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../hooks/useAuth';
 import { Button } from '../../components/ui/Button';
 import { Alert } from '../../components/ui/Alert';
-import { ROUTES, APP_NAME } from '../../utils/constants';
+import { ROUTES } from '../../utils/constants';
 
 export const VerificationPendingPage = () => {
   const location = useLocation();

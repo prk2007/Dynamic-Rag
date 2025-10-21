@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../hooks/useAuth';
@@ -15,8 +15,14 @@ export const VerifyEmailPage = () => {
   const [isSuccess, setIsSuccess] = useState(false);
   const [error, setError] = useState('');
   const [email, setEmail] = useState('');
+  const hasVerified = useRef(false);
 
   useEffect(() => {
+    // Prevent duplicate verification attempts (React StrictMode runs effects twice)
+    if (hasVerified.current) {
+      return;
+    }
+
     const token = searchParams.get('token');
 
     if (!token) {
@@ -26,6 +32,8 @@ export const VerifyEmailPage = () => {
     }
 
     const verify = async () => {
+      hasVerified.current = true;
+
       try {
         const response = await verifyEmail(token);
         setEmail(response.email);
@@ -43,7 +51,8 @@ export const VerifyEmailPage = () => {
     };
 
     verify();
-  }, [searchParams, verifyEmail, navigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run once on mount
 
   if (isVerifying) {
     return (

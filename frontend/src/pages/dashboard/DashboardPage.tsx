@@ -1,9 +1,12 @@
 import { useAuthStore } from '../../store/authStore';
 import { Card } from '../../components/ui/Card';
 import { format } from 'date-fns';
+import { useNavigate } from 'react-router-dom';
+import { ROUTES } from '../../utils/constants';
 
 export const DashboardPage = () => {
   const { user } = useAuthStore();
+  const navigate = useNavigate();
 
   if (!user) return null;
 
@@ -133,13 +136,19 @@ export const DashboardPage = () => {
           Quick Actions
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <button className="text-left p-4 border border-gray-200 rounded-lg hover:border-primary-500 hover:shadow transition-all">
+          <button
+            onClick={() => navigate(ROUTES.DOCUMENTS_UPLOAD)}
+            className="text-left p-4 border border-gray-200 rounded-lg hover:border-primary-500 hover:shadow transition-all"
+          >
             <div className="font-medium text-gray-900">Upload Documents</div>
             <div className="mt-1 text-sm text-gray-500">
               Add documents to your knowledge base
             </div>
           </button>
-          <button className="text-left p-4 border border-gray-200 rounded-lg hover:border-primary-500 hover:shadow transition-all">
+          <button
+            onClick={() => navigate(ROUTES.API_KEYS)}
+            className="text-left p-4 border border-gray-200 rounded-lg hover:border-primary-500 hover:shadow transition-all"
+          >
             <div className="font-medium text-gray-900">View API Keys</div>
             <div className="mt-1 text-sm text-gray-500">
               Manage your API authentication
