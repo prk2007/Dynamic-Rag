@@ -1,8 +1,10 @@
 import express from 'express';
 import multer from 'multer';
+import { OpenAIEmbeddings } from '@langchain/openai';
 import { authenticate } from '../middleware/authenticate.js';
 import { documentModel } from '../models/document.js';
 import { customerConfigModel } from '../models/customer-config.js';
+import { getCustomerOpenAIKey, getCustomerConfig } from '../models/customer.js';
 import { s3Service } from '../services/s3.service.js';
 import { documentParser, DocumentParser } from '../utils/parsers.js';
 import { addDocumentJob, getJobStatus, JobType } from '../queue/queues.js';
@@ -472,6 +474,63 @@ router.get('/:id/download', authenticate, async (req, res) => {
     console.error('Document download error:', error);
     res.status(500).json({
       error: 'Failed to generate download URL',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+/**
+ * POST /api/documents/search
+ * Search document chunks using vector similarity
+ */
+router.post('/search', authenticate, async (req, res) => {
+  try {
+    const customerId = req.user!.id;
+    const { query: searchQuery, limit = 10, document_id } = req.body;
+
+    if (!searchQuery || typeof searchQuery !== 'string') {
+      return res.status(400).json({
+        error: 'Missing query',
+        message: 'Please provide a search query string',
+      });
+    }
+
+    // Get customer's OpenAI key
+    const openaiKey = await getCustomerOpenAIKey(customerId);
+    if (!openaiKey) {
+      return res.status(400).json({
+        error: 'OpenAI key not configured',
+        message: 'Please add your OpenAI API key in profile settings before searching',
+      });
+    }
+
+    // Get customer config for embedding model
+    const config = await getCustomerConfig(customerId);
+    const model = config?.embedding_model || 'text-embedding-3-small';
+
+    // Generate query embedding
+    const embeddings = new OpenAIEmbeddings({
+      openAIApiKey: openaiKey,
+      modelName: model,
+    });
+    const queryVector = await embeddings.embedQuery(searchQuery);
+
+    // Search LanceDB
+    const { lancedbService } = await import('../services/lancedb.service.js');
+    const results = await lancedbService.search(customerId, queryVector, {
+      limit: Math.min(limit, 50),
+      documentId: document_id,
+    });
+
+    res.json({
+      query: searchQuery,
+      results,
+      total: results.length,
+    });
+  } catch (error) {
+    console.error('Document search error:', error);
+    res.status(500).json({
+      error: 'Search failed',
       message: error instanceof Error ? error.message : 'Unknown error',
     });
   }

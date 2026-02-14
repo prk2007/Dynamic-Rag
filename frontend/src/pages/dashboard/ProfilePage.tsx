@@ -7,7 +7,7 @@ import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import api from '../../services/api';
 import { API_ENDPOINTS } from '../../utils/constants';
-import { EyeIcon, EyeSlashIcon, KeyIcon } from '@heroicons/react/24/outline';
+import { KeyIcon } from '@heroicons/react/24/outline';
 
 export const ProfilePage = () => {
   const { user } = useAuthStore();
@@ -168,7 +168,9 @@ export const ProfilePage = () => {
             The key is stored securely and encrypted in our database.
           </p>
 
-          {hasOpenaiKey ? (
+          {isLoading ? (
+            <p className="text-sm text-gray-500">Loading key status...</p>
+          ) : hasOpenaiKey ? (
             <div className="border border-green-200 rounded-lg p-4 bg-green-50">
               <div className="flex items-start justify-between">
                 <div>
@@ -215,30 +217,15 @@ export const ProfilePage = () => {
           {(!hasOpenaiKey || showKey) && (
             <div className="space-y-4 pt-4 border-t border-gray-200">
               <div>
-                <label htmlFor="openai-key" className="block text-sm font-medium text-gray-700">
-                  OpenAI API Key
-                </label>
-                <div className="mt-1 relative">
                   <Input
                     id="openai-key"
-                    type={showKey ? 'text' : 'password'}
+                    label="OpenAI API Key"
+                    type="password"
                     placeholder="sk-..."
                     value={openaiKey}
                     onChange={(e) => setOpenaiKey(e.target.value)}
                     disabled={isSaving}
                   />
-                  <button
-                    type="button"
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center"
-                    onClick={() => setShowKey(!showKey)}
-                  >
-                    {showKey ? (
-                      <EyeSlashIcon className="h-5 w-5 text-gray-400" />
-                    ) : (
-                      <EyeIcon className="h-5 w-5 text-gray-400" />
-                    )}
-                  </button>
-                </div>
                 <p className="mt-2 text-xs text-gray-500">
                   Get your API key from{' '}
                   <a

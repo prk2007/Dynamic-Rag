@@ -311,3 +311,7 @@ data/default/
 secrets/
 .idea/
 *.swp
+
+# Test files
+test-*.js
+test-*.mjs

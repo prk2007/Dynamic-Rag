@@ -121,6 +121,9 @@ router.post('/signup', async (req: Request, res: Response) => {
       companyName: customer.company_name || undefined,
     });
 
+    console.log(`[VERIFICATION] Link for ${customer.email}: ${verificationUrl}`);
+
+    let emailSent = false;
     try {
       await emailService.send({
         to: customer.email,
@@ -128,13 +131,16 @@ router.post('/signup', async (req: Request, res: Response) => {
         html: htmlContent,
         text: textContent,
       });
+      emailSent = true;
     } catch (emailError) {
       console.error('Failed to send verification email:', emailError);
-      // Don't fail signup if email fails, customer can resend
     }
 
     res.status(201).json({
-      message: 'Account created successfully. Please check your email to verify your account.',
+      message: emailSent
+        ? 'Account created successfully. Please check your email to verify your account.'
+        : 'Account created successfully. We could not send the verification email — please use the resend option to try again.',
+      email_sent: emailSent,
       customer: {
         id: customer.id,
         email: customer.email,

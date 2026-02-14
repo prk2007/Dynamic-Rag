@@ -5,6 +5,8 @@ import { testConnection } from './database/connection.js';
 import authRoutes from './routes/auth.js';
 import documentRoutes from './routes/documents.js';
 import profileRoutes from './routes/profile.js';
+import mcpRoutes from './routes/mcp.js';
+import { s3Service } from './services/s3.service.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -43,6 +45,7 @@ app.get('/health', async (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/profile', profileRoutes);
+app.use('/api/mcp', mcpRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -62,12 +65,20 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🚀 Dynamic RAG API Server running on port ${PORT}`);
   console.log(`📋 Health check: http://localhost:${PORT}/health`);
   console.log(`🔐 Auth endpoints: http://localhost:${PORT}/api/auth/*`);
   console.log(`📄 Document endpoints: http://localhost:${PORT}/api/documents/*`);
   console.log(`👤 Profile endpoints: http://localhost:${PORT}/api/profile/*`);
+  console.log(`🤖 MCP endpoint: http://localhost:${PORT}/api/mcp`);
+
+  // Ensure S3 bucket exists
+  try {
+    await s3Service.ensureBucket();
+  } catch (error) {
+    console.error('⚠️  S3 bucket setup failed:', error);
+  }
 });
 
 // Graceful shutdown

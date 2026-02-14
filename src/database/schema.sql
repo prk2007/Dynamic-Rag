@@ -1,4 +1,4 @@
--- Dynamic RAG PostgreSQL Schema
+-- Dynamic RAG PostgresSQL Schema
 -- Phase 1: Core Infrastructure + Enhanced Authentication
 
 -- Enable UUID extension

@@ -145,6 +145,10 @@ export class LanceDBService {
       // Add records to table
       await table.add(records);
 
+      // Invalidate table cache to ensure fresh reads after write
+      // This prevents stale cache issues when searching for newly added documents
+      this.tables.delete(`${customerId}_documents`);
+
       console.log(`✅ Added ${records.length} chunks to LanceDB for document ${documentId}`);
       return records.length;
     } catch (error) {
@@ -206,6 +210,46 @@ export class LanceDBService {
   }
 
   /**
+   * Get a range of chunks from a document by index
+   */
+  async getChunkRange(
+    customerId: string,
+    documentId: string,
+    startIndex: number,
+    endIndex: number
+  ): Promise<VectorRecord[]> {
+    try {
+      const table = await this.getTable(customerId);
+
+      // Query chunks in the specified range
+      const results = await table
+        .search(new Array(1536).fill(0)) // Dummy vector for filtering
+        .where(`document_id = '${documentId}' AND chunk_index >= ${startIndex} AND chunk_index <= ${endIndex}`)
+        .limit(endIndex - startIndex + 1)
+        .toArray();
+
+      // Sort by chunk index to maintain order
+      return results
+        .map((r: any) => ({
+          id: r.id,
+          document_id: r.document_id,
+          customer_id: r.customer_id,
+          content: r.content,
+          vector: r.vector,
+          chunk_index: r.chunk_index,
+          start_char: r.start_char,
+          end_char: r.end_char,
+          title: r.title,
+          created_at: r.created_at,
+        }))
+        .sort((a, b) => a.chunk_index - b.chunk_index);
+    } catch (error) {
+      console.error('Error getting chunk range from LanceDB:', error);
+      throw new Error(`Failed to get chunk range: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
    * Delete document chunks
    */
   async deleteDocument(customerId: string, documentId: string): Promise<number> {
@@ -214,6 +258,9 @@ export class LanceDBService {
 
       // Delete all chunks for document
       await table.delete(`document_id = '${documentId}'`);
+
+      // Invalidate table cache to ensure fresh reads after delete
+      this.tables.delete(`${customerId}_documents`);
 
       console.log(`🗑️  Deleted chunks for document ${documentId}`);
 

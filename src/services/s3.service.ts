@@ -5,6 +5,7 @@ import {
   DeleteObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
+  CreateBucketCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import crypto from 'crypto';
@@ -310,7 +311,6 @@ export class S3Service {
    */
   async ensureBucket(): Promise<void> {
     try {
-      // Try to list objects - if bucket doesn't exist, this will fail
       const command = new ListObjectsV2Command({
         Bucket: this.bucket,
         MaxKeys: 1,
@@ -319,8 +319,19 @@ export class S3Service {
       await this.client.send(command);
       console.log(`✅ S3 bucket "${this.bucket}" is accessible`);
     } catch (error: any) {
-      if (error.name === 'NoSuchBucket' || error.$metadata?.httpStatusCode === 404) {
-        console.log(`⚠️  Bucket "${this.bucket}" not found. Please create it manually in MinIO console.`);
+      if (error.name === 'NoSuchBucket' || error.Code === 'NoSuchBucket' || error.$metadata?.httpStatusCode === 404) {
+        console.log(`⚠️  Bucket "${this.bucket}" not found. Creating...`);
+        try {
+          await this.client.send(new CreateBucketCommand({ Bucket: this.bucket }));
+          console.log(`✅ S3 bucket "${this.bucket}" created successfully`);
+        } catch (createError: any) {
+          if (createError.name === 'BucketAlreadyOwnedByYou') {
+            console.log(`✅ S3 bucket "${this.bucket}" already exists`);
+          } else {
+            console.error('Failed to create S3 bucket:', createError);
+            throw createError;
+          }
+        }
       } else {
         console.error('S3 bucket check error:', error);
         throw error;
