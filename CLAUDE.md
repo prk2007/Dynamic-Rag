@@ -4,642 +4,124 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Dynamic RAG** is a multi-tenant SaaS platform providing ready-made RAG (Retrieval-Augmented Generation) pipelines for multiple customers. The system combines document processing, vector search, and LLM integration with enterprise-grade security features including per-customer JWT secrets, encrypted data storage, and complete tenant isolation.
+**Dynamic RAG** is a multi-tenant SaaS platform providing RAG (Retrieval-Augmented Generation) pipelines for multiple customers. Express + TypeScript backend, React + Vite frontend, PostgreSQL, Redis/BullMQ, LanceDB vectors, MinIO/S3 storage.
 
-### Current Status: **Phase 1 Complete** ✅
+**Completed:** Auth with per-customer JWT secrets, email verification, document upload/processing pipeline with embeddings, React dashboard.
+**In Progress:** Phase 3 - RAG search/query endpoints.
 
-Phase 1 implements the authentication and infrastructure foundation:
-- Multi-tenant authentication system with per-customer JWT secrets
-- PostgreSQL database with complete schema
-- Redis-backed BullMQ job queue
-- Docker containerization ready for production
-- Security: AES-256 encryption, bcrypt password hashing, rate limiting
-
-## Quick Start
-
-### Development Mode
+## Build & Dev Commands
 
 ```bash
-# Install dependencies
-npm install
-
-# Build TypeScript
-npm run build
-
-# Run in development (watch mode)
-npm run dev
-
-# Run API server
-npm start
+npm install            # Install dependencies
+npm run build          # Compile TypeScript (tsc → dist/)
+npm run dev            # Dev server with watch mode (tsx watch src/server.ts)
+npm start              # Production server (node dist/server.js)
+npm run worker         # Run document processing worker
+npm run migrate        # Run database migrations
+npm run db:setup       # Initial database setup
 ```
 
-### Production Mode (Docker)
+No test framework is configured. Testing is done manually via curl (see `DOCKER_READY.md`).
+
+### Docker (6 containers)
 
 ```bash
-# Start all services
-docker-compose up -d
-
-# Check status
-docker-compose ps
-
-# View logs
-docker-compose logs -f api
-
-# Stop all services
-docker-compose down
+docker-compose up -d                    # Start all services
+docker-compose down                     # Stop all services
+docker-compose down -v                  # Stop + wipe data volumes
+docker-compose build && docker-compose up -d  # Rebuild after changes
+docker-compose exec postgres psql -U rag_user -d dynamic_rag  # DB shell
+docker-compose exec redis redis-cli     # Redis shell
 ```
 
-## Architecture Overview
+Containers: `postgres` (15-alpine), `redis` (7-alpine), `minio` (S3-compatible storage), `api` (Express on :3001), `worker` (BullMQ document processor), `frontend` (React on :3000 via nginx).
 
-### Current Implementation (Phase 1) ✅
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Client Applications                       │
-│            (Next.js Dashboard, n8n, Cursor, API)             │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  Express API Server                          │
-│                  (dynamicrag-api:3001)                       │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │  Authentication Routes  (/api/auth/*)                 │   │
-│  │  - Signup, Login, Refresh, Logout, /me               │   │
-│  │  - Per-customer JWT secret management                │   │
-│  └──────────────────────────────────────────────────────┘   │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-          ┌──────────┼──────────┐
-          │          │          │
-          ▼          ▼          ▼
-    ┌─────────┐ ┌─────────┐ ┌─────────┐
-    │PostgreSQL│ │  Redis  │ │ Worker  │
-    │    16   │ │    7    │ │Container│
-    └─────────┘ └─────────┘ └─────────┘
-```
-
-### Database Schema (8 Tables)
-
-**Core Tables:**
-- `customers`: User accounts with encrypted JWT secrets
-- `customer_config`: Per-customer settings (rate limits, quotas)
-- `refresh_tokens`: JWT refresh token tracking
-
-**Future Tables (Phase 2+):**
-- `documents`: Document metadata and status
-- `document_versions`: Version control and content hashing
-- `webhooks`: n8n webhook configurations
-- `usage_metrics`: Token usage and cost tracking
-- `rate_limits`: Real-time rate limit tracking
-
-See: `src/database/schema.sql`
-
-## Key Features Implemented
-
-### 🔐 Per-Customer JWT Secrets
-
-**Every customer gets unique JWT secrets** for enhanced security isolation:
-
-- **Access Token Secret**: 128-character hex string (expires: 24h)
-- **Refresh Token Secret**: 128-character hex string (expires: 7d)
-- **Encryption**: All secrets encrypted with AES-256 before storage
-- **Isolation**: Compromising one customer's secret doesn't affect others
-
-**Implementation Files:**
-- `src/auth/jwt.ts` - Token generation and verification
-- `src/models/customer.ts` - Secret generation and storage
-- `src/middleware/authenticate.ts` - Token verification middleware
-
-**How It Works:**
-1. Signup: Generate unique secrets → Encrypt → Store in DB
-2. Login: Fetch encrypted secrets → Decrypt → Generate tokens
-3. Verification: Decode token → Get customer ID → Fetch secret → Verify signature
-
-See: `PER_CUSTOMER_JWT_UPDATE.md` for detailed documentation
-
-### 🔒 Security Features
-
-1. **Password Security**
-   - bcrypt hashing (10 rounds)
-   - Validation: 8+ chars, uppercase, lowercase, number, special char
-   - Implementation: `src/auth/password.ts`
-
-2. **Data Encryption**
-   - AES-256-CBC encryption for sensitive data
-   - Encrypted fields: JWT secrets, OpenAI keys, customer data
-   - Master key: `ENCRYPTION_KEY` environment variable (64 hex chars)
-   - Implementation: `src/auth/encryption.ts`
-
-3. **Rate Limiting**
-   - Per-customer configurable limits
-   - Default: 60 req/min, 10,000 req/day
-   - Implementation: `src/middleware/rate-limit.ts`
-
-4. **Multi-Tenant Isolation**
-   - Filesystem isolation: Separate LanceDB per customer
-   - Database isolation: Row-level filtering by customer_id
-   - S3 isolation: Customer-specific prefixes
-
-### 🐳 Docker Setup
-
-**4 Containers:**
-- `dynamicrag-api` - Express API server (Node 20 Alpine)
-- `dynamicrag-worker` - BullMQ worker for async processing (Node 20 Alpine)
-- `dynamicrag-postgres` - PostgreSQL 16 database
-- `dynamicrag-redis` - Redis 7 for job queue
-
-**Features:**
-- Multi-stage builds for optimized images
-- Health checks on all containers
-- Persistent volumes for data
-- Automatic restart policies
-- Native module support (bcrypt)
-
-See: `docker-compose.yml`, `Dockerfile`
-
-## API Endpoints (Phase 1)
-
-### Authentication Endpoints
+### Frontend
 
 ```bash
-# Health Check
-GET /health
-→ Returns server status and database connectivity
-
-# Signup
-POST /api/auth/signup
-Body: { email, password, company_name?, openai_api_key? }
-→ Creates customer with unique JWT secrets
-→ Returns: customer data, accessToken, refreshToken
-
-# Login
-POST /api/auth/login
-Body: { email, password }
-→ Authenticates user with per-customer secrets
-→ Returns: customer data, accessToken, refreshToken
-
-# Get Current User
-GET /api/auth/me
-Header: Authorization: Bearer <accessToken>
-→ Returns: customer data and configuration
-
-# Refresh Token
-POST /api/auth/refresh
-Body: { refreshToken }
-→ Generates new token pair, revokes old refresh token
-→ Returns: new accessToken, new refreshToken
-
-# Logout
-POST /api/auth/logout
-Header: Authorization: Bearer <accessToken>
-Body: { refreshToken }
-→ Revokes specific refresh token
-
-# Logout All Devices
-POST /api/auth/logout-all
-Header: Authorization: Bearer <accessToken>
-→ Revokes all refresh tokens for customer
+cd frontend && npm install && npm run dev   # Dev server on :5173
+cd frontend && npm run build                # Production build
 ```
 
-See: `DOCKER_READY.md` for testing examples
+React 18 + Vite + TypeScript + TailwindCSS + Zustand (state) + React Router v6 + Axios + React Hook Form/Zod.
 
-## Environment Variables
+## Architecture
 
-Required variables in `.env`:
-
-```bash
-# Server
-PORT=3001
-NODE_ENV=development
-
-# PostgreSQL Database
-DATABASE_URL=postgresql://rag_user:password@postgres:5432/dynamic_rag
-DB_HOST=postgres
-DB_PORT=5432
-DB_USER=rag_user
-DB_PASSWORD=your_secure_password
-DB_NAME=dynamic_rag
-
-# Redis
-REDIS_HOST=redis
-REDIS_PORT=6379
-REDIS_PASSWORD=
-
-# JWT Configuration
-JWT_EXPIRES_IN=24h
-JWT_REFRESH_EXPIRES_IN=7d
-
-# Encryption (REQUIRED - 64 hex characters)
-ENCRYPTION_KEY=your-64-character-hex-string
-
-# Generate with: openssl rand -hex 32
-```
-
-**Optional (Phase 2+):**
-- `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_BUCKET`
-- `OPENAI_API_KEY` (fallback key)
-- `CUSTOMERS_DB_PATH`, `DEFAULT_DB_PATH` (LanceDB paths)
-
-See: `.env.example`
-
-## Directory Structure
+### Request Flow
 
 ```
-/
-├── src/
-│   ├── server.ts              # Main API server (Phase 1)
-│   ├── index.ts               # Original MCP server (legacy)
-│   │
-│   ├── auth/                  # Authentication & Security
-│   │   ├── jwt.ts             # Per-customer JWT management
-│   │   ├── password.ts        # Password hashing & validation
-│   │   └── encryption.ts      # AES-256 encryption utilities
-│   │
-│   ├── database/              # Database Layer
-│   │   ├── connection.ts      # PostgreSQL connection pool
-│   │   ├── schema.sql         # Complete DB schema (8 tables)
-│   │   ├── migrate.ts         # Migration runner
-│   │   └── setup.ts           # Initial setup script
-│   │
-│   ├── models/                # Data Models
-│   │   └── customer.ts        # Customer CRUD + JWT secrets
-│   │
-│   ├── routes/                # API Routes
-│   │   └── auth.ts            # Authentication endpoints
-│   │
-│   ├── middleware/            # Middleware
-│   │   ├── authenticate.ts    # JWT verification (async)
-│   │   └── rate-limit.ts      # Per-customer rate limiting
-│   │
-│   ├── queue/                 # Job Queue (Phase 2)
-│   │   ├── connection.ts      # Redis/BullMQ connection
-│   │   └── queues.ts          # Queue definitions
-│   │
-│   ├── workers/               # Background Workers (Phase 2)
-│   │   └── document-worker.ts # Document processing worker
-│   │
-│   ├── lancedb/               # Vector Database (Legacy MCP)
-│   │   └── client.ts          # LanceDB connection
-│   │
-│   └── tools/                 # MCP Tools (Legacy)
-│       ├── registry.ts        # Tool management
-│       └── operations/        # Tool implementations
-│
-├── dist/                      # Compiled JavaScript (gitignored)
-│
-├── Seed Script/               # Data seeding utilities
-│   ├── seed.py                # Ollama-based seeding
-│   ├── seed_openai.py         # OpenAI-based seeding
-│   └── seed_gemini.py         # Gemini-based seeding
-│
-├── docker-compose.yml         # Multi-container setup
-├── Dockerfile                 # Multi-stage Node.js build
-├── .dockerignore              # Docker build exclusions
-│
-├── .env                       # Environment variables (gitignored)
-├── .env.example               # Environment template
-│
-├── package.json               # Dependencies & scripts
-├── tsconfig.json              # TypeScript configuration
-│
-└── Documentation/
-    ├── ARCHITECTURE.md        # Complete system architecture
-    ├── ARCHITECTURE_DIAGRAMS.md  # Flow diagrams (10 diagrams)
-    ├── DOCKER_READY.md        # Docker setup & testing guide
-    ├── PER_CUSTOMER_JWT_UPDATE.md  # JWT implementation details
-    ├── DEPENDENCIES.md        # BullMQ migration guide
-    ├── SETUP.md               # Local setup instructions
-    └── README.md              # Project overview
+Client → Express (:3001) → authenticate middleware → Route handler → PostgreSQL
+                                                   → S3/MinIO (file storage)
+                                                   → BullMQ queue → Worker → LanceDB (vectors)
 ```
 
-## Development Workflow
+### Key Architectural Decisions
 
-### Making Changes
+**Per-customer JWT secrets:** Every customer gets unique 128-char hex JWT secrets (access + refresh), encrypted with AES-256-CBC before storage. Token verification requires DB lookup to fetch and decrypt the customer's secret. This means `authenticate` middleware is async.
 
-1. **Edit TypeScript files** in `src/`
-2. **Build**: `npm run build` (or `npm run watch` for dev)
-3. **Test locally**: `npm run dev`
-4. **Test in Docker**: `docker-compose build && docker-compose up -d`
+**Multi-tenant isolation:** Row-level DB filtering by `customer_id`, separate LanceDB instances per customer, customer-specific S3 prefixes.
 
-### Database Changes
+**Document processing is async:** Upload → S3 → BullMQ job → Worker picks up → Parse (PDF/HTML/TXT/MD) → Chunk → Embed (OpenAI) → Store in LanceDB → Update status in PostgreSQL. Worker concurrency: 5, rate limit: 10/sec.
 
-```bash
-# Edit schema
-vim src/database/schema.sql
+**Customer status flow:** `pending_verification` → `active` (after email verification). Login is blocked until email is verified. `password_hash` is nullable to support future SSO-only accounts.
 
-# Rebuild and restart
-docker-compose down -v  # Remove volumes to reset DB
-docker-compose up -d
+### Entry Points
 
-# Apply schema
-docker cp src/database/schema.sql dynamicrag-api:/app/schema.sql
-docker-compose exec api node -e "
-  const { Pool } = require('pg');
-  const fs = require('fs');
-  const pool = new Pool({
-    host: 'postgres',
-    port: 5432,
-    user: 'rag_user',
-    password: 'SecurePassword123!',
-    database: 'dynamic_rag',
-  });
-  (async () => {
-    const client = await pool.connect();
-    try {
-      const schema = fs.readFileSync('/app/schema.sql', 'utf8');
-      await client.query(schema);
-      console.log('✅ Schema applied');
-    } finally {
-      client.release();
-      await pool.end();
-    }
-  })().catch(console.error);
-"
+- **API server:** `src/server.ts` (NOT `src/index.ts` which is the legacy MCP server)
+- **Worker:** `src/workers/document-worker.ts`
+- **Frontend:** `frontend/src/main.tsx` → `App.tsx`
+
+### Route Registration (src/server.ts)
+
+```
+/api/auth/*       → src/routes/auth.ts       (signup, login, refresh, logout, verify-email, resend-verification)
+/api/documents/*  → src/routes/documents.ts  (upload, url-ingest, list, stats, detail, status, delete, download)
+/api/profile/*    → src/routes/profile.ts    (get profile, manage OpenAI key)
+/health           → inline health check
 ```
 
-### Adding New API Endpoints
-
-1. Create route handler in `src/routes/`
-2. Register in `src/server.ts`: `app.use('/api/your-route', yourRoutes)`
-3. Add authentication: Use `authenticate` middleware
-4. Test with curl examples
-5. Document in relevant MD files
-
-### Common Issues & Solutions
-
-**Issue**: `ENCRYPTION_KEY` error
-**Solution**: Generate proper 64-char hex key:
-```bash
-openssl rand -hex 32
-```
-Add to `.env` and restart: `docker-compose restart api`
-
-**Issue**: bcrypt native module error
-**Solution**: Dockerfile includes build dependencies (python3, make, g++)
-
-**Issue**: Package lock out of sync
-**Solution**:
-```bash
-rm -f package-lock.json
-npm install
-docker-compose build
-```
-
-**Issue**: Database not initialized
-**Solution**: See "Database Changes" section above
-
-## Testing
-
-### Manual Testing
-
-```bash
-# Health check
-curl http://localhost:3001/health
-
-# Create test account
-curl -X POST http://localhost:3001/api/auth/signup \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"test@example.com","password":"Test123#","company_name":"Test Co"}'
-
-# Save the accessToken from response
-
-# Test authenticated endpoint
-curl http://localhost:3001/api/auth/me \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
-```
-
-See: `DOCKER_READY.md` for complete testing guide
-
-### Database Inspection
-
-```bash
-# Connect to PostgreSQL
-docker-compose exec postgres psql -U rag_user -d dynamic_rag
-
-# View customers
-SELECT id, email, company_name, status, created_at FROM customers;
-
-# View customer configs
-SELECT customer_id, rate_limit_requests_per_minute, max_documents FROM customer_config;
-
-# View refresh tokens
-SELECT customer_id, created_at, expires_at, revoked FROM refresh_tokens;
-```
-
-### Redis Inspection
-
-```bash
-# Connect to Redis
-docker-compose exec redis redis-cli
-
-# View all keys
-KEYS *
-
-# View BullMQ queues (Phase 2)
-KEYS bull:document-processing:*
-```
-
-## Dependencies
-
-### Production Dependencies
-
-```json
-{
-  "@lancedb/lancedb": "^0.15.0",          // Vector database
-  "@langchain/openai": "^0.3.12",         // OpenAI embeddings
-  "@modelcontextprotocol/sdk": "1.1.1",   // MCP protocol
-  "@aws-sdk/client-s3": "^3.700.0",       // S3 file storage
-  "bcrypt": "^5.1.1",                     // Password hashing
-  "bullmq": "^5.28.2",                    // Job queue
-  "cheerio": "^1.0.0",                    // HTML parsing
-  "cors": "^2.8.5",                       // CORS middleware
-  "dotenv": "^16.4.7",                    // Environment variables
-  "express": "^4.21.2",                   // Web server
-  "ioredis": "^5.4.2",                    // Redis client
-  "jsonwebtoken": "^9.0.2",               // JWT tokens
-  "lru-cache": "^11.0.2",                 // Caching
-  "pdf-parse": "^1.1.1",                  // PDF parsing
-  "pg": "^8.13.1"                         // PostgreSQL client
-}
-```
-
-### Development Dependencies
-
-```json
-{
-  "@types/bcrypt": "^5.0.2",
-  "@types/express": "^5.0.0",
-  "@types/jsonwebtoken": "^9.0.7",
-  "@types/node": "^22.10.7",
-  "@types/pg": "^8.11.10",
-  "shx": "^0.3.4",                        // Cross-platform shell
-  "tsx": "^4.19.2",                       // TypeScript execution
-  "typescript": "^5.7.3"
-}
-```
-
-## Roadmap
-
-### Phase 1: Foundation ✅ COMPLETE
-
-- [x] Multi-tenant authentication system
-- [x] Per-customer JWT secrets
-- [x] PostgreSQL database with complete schema
-- [x] Redis integration for job queue
-- [x] Docker containerization
-- [x] Security: encryption, password hashing, rate limiting
-- [x] API endpoints: signup, login, refresh, logout
-- [x] Health checks and monitoring
-
-### Phase 1.5: Email Verification 🚧 IN PROGRESS
-
-- [x] Database schema updated (email verification fields)
-- [ ] Email service integration (SendGrid)
-- [ ] Verification token generation and validation
-- [ ] Email templates (verification, welcome)
-- [ ] Updated signup flow (send verification email)
-- [ ] Updated login flow (check email verification)
-- [ ] Resend verification endpoint
-- [ ] Testing and documentation
-
-**Note**: Database schema already includes MFA and SSO tables for future phases
-
-### Phase 1.6: MFA/2FA 📋 PLANNED
-
-- [x] Database schema ready (MFA tables exist)
-- [x] Complete design document
-- [ ] TOTP implementation (Google Authenticator compatible)
-- [ ] QR code generation
-- [ ] Backup codes system
-- [ ] Trusted device management
-- [ ] MFA setup and verification endpoints
-
-### Phase 1.7: SSO Integration 📋 PLANNED
-
-- [x] Database schema ready (SSO tables exist)
-- [x] Complete design document
-- [ ] Google OAuth integration
-- [ ] Microsoft OAuth integration
-- [ ] GitHub OAuth integration
-- [ ] Account linking functionality
-- [ ] Profile sync
-
-### Phase 2: Document Processing 📋 NEXT
-
-- [ ] Multi-tenant LanceDB manager with connection pooling
-- [ ] Document upload API (S3 integration)
-- [ ] Document processing pipeline (PDF, HTML, TXT)
-- [ ] Text chunking and embedding generation
-- [ ] BullMQ worker implementation
-- [ ] Document versioning and deduplication
-- [ ] Document API endpoints (CRUD)
-- [ ] Web scraping integration
-
-### Phase 3: RAG & Search 📋 PLANNED
-
-- [ ] Vector search API endpoints
-- [ ] RAG query pipeline
-- [ ] Context retrieval and ranking
-- [ ] Token usage tracking and metrics
-- [ ] Budget monitoring and alerts
-- [ ] Usage analytics dashboard
-
-### Phase 4: n8n Integration 📋 PLANNED
-
-- [ ] Webhook management API
-- [ ] n8n workflow templates
-- [ ] Real-time document sync
-- [ ] Event-driven processing
-- [ ] n8n node package
-
-### Phase 5: Frontend Dashboard 📋 PLANNED
-
-- [ ] Next.js dashboard application
-- [ ] Document management UI
-- [ ] Webhook configuration UI
-- [ ] Usage metrics visualization
-- [ ] Customer settings panel
-
-## Important Notes for AI Assistants
-
-### When Working on Phase 1.5 (Current - Email Verification)
-
-- **Main server**: `src/server.ts` (NOT `src/index.ts`)
-- **Authentication**: Always use per-customer JWT secrets
-- **Middleware**: `authenticate.ts` is async (uses `await verifyAccessToken()`)
-- **Database**: All customer operations must include encryption/decryption
-- **Security**: Never store secrets unencrypted
-- **Email Verification**: Always check `email_verified` before allowing login
-- **Forward Compatibility**: Code must support future MFA and SSO (password_hash is nullable)
-- **Status Flow**: `pending_verification` → `active` (after email verification)
-
-### When Starting Phase 2
-
-- **LanceDB**: Create per-customer database instances
-- **S3 Integration**: Use customer-specific prefixes
-- **Workers**: Implement in `src/workers/document-worker.ts`
-- **Job Queue**: Use BullMQ with Redis
-- **Document Types**: Support PDF, HTML, TXT initially
-
-### Code Quality Standards
-
-- Use TypeScript strict mode
-- Handle errors gracefully
-- Log important events
-- Add JSDoc comments to functions
-- Follow existing code structure
-- Write secure code (validate inputs, sanitize data)
-
-### Security Requirements
-
-- Always encrypt sensitive data before storage
-- Use bcrypt for password hashing
-- Implement rate limiting on all endpoints
-- Validate all user inputs
-- Use parameterized queries (prevent SQL injection)
-- Implement proper CORS policies
-
-## Documentation References
-
-- **ARCHITECTURE.md**: Complete system architecture and tech stack
-- **ARCHITECTURE_DIAGRAMS.md**: 10 detailed flow diagrams
-- **DOCKER_READY.md**: Docker setup and testing guide
-- **PER_CUSTOMER_JWT_UPDATE.md**: JWT implementation details
-- **DEPENDENCIES.md**: BullMQ migration guide
-- **SETUP.md**: Local development setup
-- **README.md**: Project overview
-
-## Quick Reference Commands
-
-```bash
-# Development
-npm run dev              # Run in watch mode
-npm run build            # Build TypeScript
-npm start                # Start production server
-
-# Docker
-docker-compose up -d     # Start all services
-docker-compose down      # Stop all services
-docker-compose logs -f   # View logs
-docker-compose ps        # Check status
-
-# Database
-docker-compose exec postgres psql -U rag_user -d dynamic_rag
-
-# Redis
-docker-compose exec redis redis-cli
-
-# Rebuild everything
-docker-compose down -v
-docker-compose build
-docker-compose up -d
-```
-
----
-
-**Project Status**: Phase 1 Complete ✅
-**Production Ready**: Yes (Phase 1 features)
-**Docker Ready**: Yes
-**Documentation**: Complete
-**Next Phase**: Document Processing (Phase 2)
+All `/api/documents/*` and `/api/profile/*` routes require the `authenticate` middleware. Auth routes selectively apply it.
+
+### Data Layer
+
+- **Models** (`src/models/`): Raw SQL queries via `pg` pool — no ORM. Customer, CustomerConfig, Document, EmailVerification.
+- **Services** (`src/services/`): Business logic — S3 (upload/download/presigned URLs), LanceDB (vector storage), embedding generation, email (SendGrid), email verification.
+- **Database** (`src/database/`): Connection pool (`connection.ts`), schema (`schema.sql` — 11+ tables including future MFA/SSO tables), migrations.
+
+### Module System
+
+ES Modules (`"type": "module"` in package.json). All internal imports use `.js` extensions (e.g., `import { query } from '../database/connection.js'`). TypeScript target: ES2020.
+
+## Critical Patterns
+
+### Encryption
+
+All sensitive fields (JWT secrets, OpenAI API keys) are encrypted with AES-256-CBC before DB storage and decrypted on read. Use `encrypt()`/`decrypt()` from `src/auth/encryption.ts`. The `ENCRYPTION_KEY` env var must be 64 hex chars (`openssl rand -hex 32`).
+
+### Authentication Middleware
+
+`authenticate` from `src/middleware/authenticate.ts` is async. It attaches `req.customerId`, `req.customerEmail`, `req.customerConfig`, and `req.user` to the request. There's also `optionalAuthenticate` that doesn't fail on missing tokens.
+
+### Adding New Routes
+
+1. Create route file in `src/routes/`
+2. Register in `src/server.ts` with `app.use('/api/your-route', yourRoutes)`
+3. Apply `authenticate` middleware to protected endpoints
+4. Use `req.customerId` for tenant-scoped queries
+
+### Database Queries
+
+Use `query()` from `src/database/connection.ts`. Always parameterized queries (`$1`, `$2`, etc.). Always filter by `customer_id` for tenant isolation.
+
+## Environment
+
+Required: `ENCRYPTION_KEY` (64 hex chars), `DB_*` (PostgreSQL), `REDIS_*`, `S3_*`/`MINIO_*`, `OPENAI_API_KEY`.
+Optional: `SENDGRID_API_KEY`, `FRONTEND_URL`, `EMAIL_*`.
+See `.env.example` for all variables.
+
+## Common Issues
+
+- **`ENCRYPTION_KEY` error:** Generate with `openssl rand -hex 32`, must be exactly 64 hex chars.
+- **bcrypt native module error:** Dockerfile includes python3/make/g++ for native compilation.
+- **Schema not applied:** After `docker-compose down -v`, schema must be reapplied (see `DOCKER_READY.md`).
+- **Import errors:** All imports must use `.js` extension (ES modules requirement).

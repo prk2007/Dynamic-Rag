@@ -8,6 +8,7 @@ import { getCustomerOpenAIKey, getCustomerConfig } from '../models/customer.js';
 import { s3Service } from '../services/s3.service.js';
 import { documentParser, DocumentParser } from '../utils/parsers.js';
 import { addDocumentJob, getJobStatus, JobType } from '../queue/queues.js';
+import { usageMetricsModel } from '../models/usage-metrics.js';
 import type { DocumentType } from '../models/document.js';
 
 const router = express.Router();
@@ -520,6 +521,11 @@ router.post('/search', authenticate, async (req, res) => {
     const results = await lancedbService.search(customerId, queryVector, {
       limit: Math.min(limit, 50),
       documentId: document_id,
+    });
+
+    // Track search query (fire-and-forget)
+    usageMetricsModel.track(customerId, 'search_query', 1, {
+      metadata: { query: searchQuery, results_count: results.length },
     });
 
     res.json({

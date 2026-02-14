@@ -1,12 +1,37 @@
+import { useState, useEffect } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { Card } from '../../components/ui/Card';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
-import { ROUTES } from '../../utils/constants';
+import { ROUTES, API_ENDPOINTS } from '../../utils/constants';
+import api from '../../services/api';
+
+interface UsageSummary {
+  documents: number;
+  search_query: number;
+  api_call: number;
+  [key: string]: number;
+}
 
 export const DashboardPage = () => {
   const { user } = useAuthStore();
   const navigate = useNavigate();
+  const [stats, setStats] = useState<UsageSummary>({ documents: 0, search_query: 0, api_call: 0 });
+  const [loadingStats, setLoadingStats] = useState(true);
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const response = await api.get(API_ENDPOINTS.USAGE.SUMMARY);
+        setStats(response.data);
+      } catch (error) {
+        console.error('Failed to fetch dashboard stats:', error);
+      } finally {
+        setLoadingStats(false);
+      }
+    };
+    fetchStats();
+  }, []);
 
   if (!user) return null;
 
@@ -43,7 +68,7 @@ export const DashboardPage = () => {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Documents</p>
-              <p className="text-2xl font-semibold text-gray-900">0</p>
+              <p className="text-2xl font-semibold text-gray-900">{loadingStats ? '...' : stats.documents}</p>
             </div>
           </div>
         </Card>
@@ -67,7 +92,7 @@ export const DashboardPage = () => {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Searches</p>
-              <p className="text-2xl font-semibold text-gray-900">0</p>
+              <p className="text-2xl font-semibold text-gray-900">{loadingStats ? '...' : stats.search_query}</p>
             </div>
           </div>
         </Card>
@@ -91,7 +116,7 @@ export const DashboardPage = () => {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">API Calls</p>
-              <p className="text-2xl font-semibold text-gray-900">0</p>
+              <p className="text-2xl font-semibold text-gray-900">{loadingStats ? '...' : stats.api_call}</p>
             </div>
           </div>
         </Card>

@@ -6,7 +6,9 @@ import authRoutes from './routes/auth.js';
 import documentRoutes from './routes/documents.js';
 import profileRoutes from './routes/profile.js';
 import mcpRoutes from './routes/mcp.js';
+import usageRoutes from './routes/usage.js';
 import { s3Service } from './services/s3.service.js';
+import { trackApiUsage } from './middleware/usage-tracking.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -43,9 +45,10 @@ app.get('/health', async (req, res) => {
 
 // API Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/documents', documentRoutes);
-app.use('/api/profile', profileRoutes);
-app.use('/api/mcp', mcpRoutes);
+app.use('/api/documents', trackApiUsage, documentRoutes);
+app.use('/api/profile', trackApiUsage, profileRoutes);
+app.use('/api/mcp', trackApiUsage, mcpRoutes);
+app.use('/api/usage', trackApiUsage, usageRoutes);
 
 // 404 handler
 app.use((req, res) => {

@@ -39,6 +39,10 @@ export const API_ENDPOINTS = {
     DELETE: (id: string) => `/api/documents/${id}`,
     STATS: '/api/documents/stats',
   },
+  USAGE: {
+    SUMMARY: '/api/usage/summary',
+    BY_TYPE: (type: string) => `/api/usage/${type}`,
+  },
   PROFILE: {
     GET: '/api/profile',
     UPDATE_OPENAI_KEY: '/api/profile/openai-key',
