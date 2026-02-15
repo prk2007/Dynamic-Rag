@@ -1,0 +1,49 @@
+// Token storage utilities
+export const TokenStorage = {
+  getAccessToken: (): string | null => {
+    return localStorage.getItem('accessToken');
+  },
+
+  setAccessToken: (token: string): void => {
+    localStorage.setItem('accessToken', token);
+  },
+
+  getRefreshToken: (): string | null => {
+    return localStorage.getItem('refreshToken');
+  },
+
+  setRefreshToken: (token: string): void => {
+    localStorage.setItem('refreshToken', token);
+  },
+
+  clearTokens: (): void => {
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('refreshToken');
+  },
+
+  hasTokens: (): boolean => {
+    return !!(localStorage.getItem('accessToken') && localStorage.getItem('refreshToken'));
+  },
+};
+
+// User storage utilities
+export const UserStorage = {
+  getUser: () => {
+    const user = localStorage.getItem('user');
+    return user ? JSON.parse(user) : null;
+  },
+
+  setUser: (user: any): void => {
+    localStorage.setItem('user', JSON.stringify(user));
+  },
+
+  clearUser: (): void => {
+    localStorage.removeItem('user');
+  },
+};
+
+// Combined clear function
+export const clearAllStorage = (): void => {
+  TokenStorage.clearTokens();
+  UserStorage.clearUser();
+};
