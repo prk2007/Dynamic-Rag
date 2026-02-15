@@ -4,6 +4,9 @@
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- Enable pgvector extension for vector similarity search
+CREATE EXTENSION IF NOT EXISTS vector;
+
 -- =====================================================
 -- CUSTOMERS TABLE (UPDATED with Email Verification & MFA)
 -- =====================================================
@@ -199,6 +202,65 @@ CREATE INDEX idx_documents_status ON documents(status);
 CREATE INDEX idx_documents_created ON documents(customer_id, created_at DESC);
 
 -- =====================================================
+-- DOCUMENT CHUNKS TABLE (Vector Storage with pgvector)
+-- =====================================================
+-- Table for text-embedding-3-small (1536 dimensions)
+CREATE TABLE IF NOT EXISTS document_chunks (
+    id TEXT PRIMARY KEY,  -- Format: {documentId}_{chunkIndex}
+    document_id UUID REFERENCES documents(id) ON DELETE CASCADE,
+    customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    embedding vector(1536),  -- OpenAI text-embedding-3-small
+    chunk_index INTEGER NOT NULL,
+    start_char INTEGER NOT NULL,
+    end_char INTEGER NOT NULL,
+    title TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT unique_chunk_per_document UNIQUE(document_id, chunk_index)
+);
+
+-- Indexes for multi-tenant queries and filtering
+CREATE INDEX idx_chunks_customer ON document_chunks(customer_id);
+CREATE INDEX idx_chunks_document ON document_chunks(document_id);
+CREATE INDEX idx_chunks_created ON document_chunks(customer_id, created_at DESC);
+
+-- HNSW vector similarity index (cosine distance)
+-- m=16: number of connections per node (balance between recall and speed)
+-- ef_construction=64: size of dynamic candidate list during construction
+CREATE INDEX idx_chunks_embedding_hnsw ON document_chunks
+USING hnsw (embedding vector_cosine_ops)
+WITH (m = 16, ef_construction = 64);
+
+-- Table for text-embedding-3-large (3072 dimensions)
+CREATE TABLE IF NOT EXISTS document_chunks_3072 (
+    id TEXT PRIMARY KEY,
+    document_id UUID REFERENCES documents(id) ON DELETE CASCADE,
+    customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    embedding vector(3072),  -- OpenAI text-embedding-3-large
+    chunk_index INTEGER NOT NULL,
+    start_char INTEGER NOT NULL,
+    end_char INTEGER NOT NULL,
+    title TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT unique_chunk_per_document_3072 UNIQUE(document_id, chunk_index)
+);
+
+-- Indexes for 3072-dimension table
+CREATE INDEX idx_chunks_3072_customer ON document_chunks_3072(customer_id);
+CREATE INDEX idx_chunks_3072_document ON document_chunks_3072(document_id);
+CREATE INDEX idx_chunks_3072_created ON document_chunks_3072(customer_id, created_at DESC);
+
+-- NOTE: Vector index for 3072 dimensions is not supported by pgvector (max 2000 dims)
+-- Queries will use sequential scan, which is acceptable for small-medium datasets
+-- For large datasets, consider using text-embedding-3-small (1536 dims) with HNSW index
+-- or implementing dimensionality reduction techniques
+
+-- NOTE: Triggers for updated_at are created after the function definition below
+
+-- =====================================================
 -- DOCUMENT VERSIONS TABLE
 -- =====================================================
 CREATE TABLE IF NOT EXISTS document_versions (
@@ -301,6 +363,12 @@ CREATE TRIGGER update_customers_updated_at BEFORE UPDATE ON customers
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_customer_config_updated_at BEFORE UPDATE ON customer_config
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_document_chunks_updated_at BEFORE UPDATE ON document_chunks
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_document_chunks_3072_updated_at BEFORE UPDATE ON document_chunks_3072
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_documents_updated_at BEFORE UPDATE ON documents

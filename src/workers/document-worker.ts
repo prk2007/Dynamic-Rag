@@ -5,7 +5,7 @@ import type { ProcessDocumentJob, ScrapeUrlJob } from '../queue/queues.js';
 import { s3Service } from '../services/s3.service.js';
 import { documentParser } from '../utils/parsers.js';
 import { embeddingService } from '../services/embedding.service.js';
-import { lancedbService } from '../services/lancedb.service.js';
+import { pgvectorService } from '../services/pgvector.service.js';
 import { documentModel } from '../models/document.js';
 import { findCustomerById } from '../models/customer.js';
 import { customerConfigModel } from '../models/customer-config.js';
@@ -126,9 +126,9 @@ class DocumentWorker {
 
       await job.updateProgress({ stage: 'storing', progress: 70 });
 
-      // 6. Store in LanceDB
-      console.log(`💾 Storing ${chunks.length} chunks in LanceDB`);
-      await lancedbService.addChunks(customerId, documentId, chunks);
+      // 6. Store in pgvector
+      console.log(`💾 Storing ${chunks.length} chunks in pgvector`);
+      await pgvectorService.addChunks(customerId, documentId, chunks);
 
       await job.updateProgress({ stage: 'finalizing', progress: 90 });
 
@@ -258,8 +258,8 @@ class DocumentWorker {
 
       await job.updateProgress({ stage: 'storing', progress: 70 });
 
-      // 6. Store in LanceDB
-      await lancedbService.addChunks(customerId, documentId, chunks);
+      // 6. Store in pgvector
+      await pgvectorService.addChunks(customerId, documentId, chunks);
 
       await job.updateProgress({ stage: 'finalizing', progress: 90 });
 
@@ -350,14 +350,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   process.on('SIGTERM', async () => {
     console.log('SIGTERM received, shutting down...');
     await worker.stop();
-    await lancedbService.closeAllConnections();
+    // PostgreSQL connection pool is handled automatically by database connection
     process.exit(0);
   });
 
   process.on('SIGINT', async () => {
     console.log('SIGINT received, shutting down...');
     await worker.stop();
-    await lancedbService.closeAllConnections();
+    // PostgreSQL connection pool is handled automatically by database connection
     process.exit(0);
   });
 }

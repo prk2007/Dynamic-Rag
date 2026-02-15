@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Dynamic RAG** is a multi-tenant SaaS platform providing RAG (Retrieval-Augmented Generation) pipelines for multiple customers. Express + TypeScript backend, React + Vite frontend, PostgreSQL, Redis/BullMQ, LanceDB vectors, MinIO/S3 storage.
+**Dynamic RAG** is a multi-tenant SaaS platform providing RAG (Retrieval-Augmented Generation) pipelines for multiple customers. Express + TypeScript backend, React + Vite frontend, PostgreSQL with pgvector extension, Redis/BullMQ, MinIO/S3 storage.
 
 **Completed:** Auth with per-customer JWT secrets, email verification, document upload/processing pipeline with embeddings, React dashboard.
 **In Progress:** Phase 3 - RAG search/query endpoints.
@@ -50,18 +50,18 @@ React 18 + Vite + TypeScript + TailwindCSS + Zustand (state) + React Router v6 +
 ### Request Flow
 
 ```
-Client → Express (:3001) → authenticate middleware → Route handler → PostgreSQL
+Client → Express (:3001) → authenticate middleware → Route handler → PostgreSQL (data + pgvector embeddings)
                                                    → S3/MinIO (file storage)
-                                                   → BullMQ queue → Worker → LanceDB (vectors)
+                                                   → BullMQ queue → Worker → PostgreSQL/pgvector
 ```
 
 ### Key Architectural Decisions
 
 **Per-customer JWT secrets:** Every customer gets unique 128-char hex JWT secrets (access + refresh), encrypted with AES-256-CBC before storage. Token verification requires DB lookup to fetch and decrypt the customer's secret. This means `authenticate` middleware is async.
 
-**Multi-tenant isolation:** Row-level DB filtering by `customer_id`, separate LanceDB instances per customer, customer-specific S3 prefixes.
+**Multi-tenant isolation:** Row-level DB filtering by `customer_id` in all tables including `document_chunks` and `document_chunks_3072` (pgvector tables), customer-specific S3 prefixes.
 
-**Document processing is async:** Upload → S3 → BullMQ job → Worker picks up → Parse (PDF/HTML/TXT/MD) → Chunk → Embed (OpenAI) → Store in LanceDB → Update status in PostgreSQL. Worker concurrency: 5, rate limit: 10/sec.
+**Document processing is async:** Upload → S3 → BullMQ job → Worker picks up → Parse (PDF/HTML/TXT/MD) → Chunk → Embed (OpenAI) → Store embeddings in PostgreSQL/pgvector (`document_chunks` or `document_chunks_3072` based on embedding dimension) → Update status in PostgreSQL. Worker concurrency: 5, rate limit: 10/sec.
 
 **Customer status flow:** `pending_verification` → `active` (after email verification). Login is blocked until email is verified. `password_hash` is nullable to support future SSO-only accounts.
 
@@ -85,7 +85,7 @@ All `/api/documents/*` and `/api/profile/*` routes require the `authenticate` mi
 ### Data Layer
 
 - **Models** (`src/models/`): Raw SQL queries via `pg` pool — no ORM. Customer, CustomerConfig, Document, EmailVerification.
-- **Services** (`src/services/`): Business logic — S3 (upload/download/presigned URLs), LanceDB (vector storage), embedding generation, email (SendGrid), email verification.
+- **Services** (`src/services/`): Business logic — S3 (upload/download/presigned URLs), pgvector (vector storage via PostgreSQL), embedding generation, email (SendGrid), email verification, reranking.
 - **Database** (`src/database/`): Connection pool (`connection.ts`), schema (`schema.sql` — 11+ tables including future MFA/SSO tables), migrations.
 
 ### Module System
@@ -118,6 +118,75 @@ Use `query()` from `src/database/connection.ts`. Always parameterized queries (`
 Required: `ENCRYPTION_KEY` (64 hex chars), `DB_*` (PostgreSQL), `REDIS_*`, `S3_*`/`MINIO_*`, `OPENAI_API_KEY`.
 Optional: `SENDGRID_API_KEY`, `FRONTEND_URL`, `EMAIL_*`.
 See `.env.example` for all variables.
+
+## Vector Storage with pgvector
+
+### Architecture
+
+The system uses **PostgreSQL with pgvector extension** for vector storage, replacing the previous LanceDB implementation. This provides:
+
+- **Single database** for both relational data and vector embeddings
+- **ACID transactions** - vector operations participate in database transactions
+- **Row-level multi-tenancy** - all chunks filtered by `customer_id`
+- **Zero additional infrastructure** - no separate vector database to manage
+- **Proven at scale** - used by Supabase, Neon, and production systems worldwide
+
+### Schema
+
+Two tables support different embedding dimensions:
+
+```sql
+-- For text-embedding-3-small (1536 dimensions)
+document_chunks (
+  id, document_id, customer_id, content,
+  embedding vector(1536),
+  chunk_index, start_char, end_char, title,
+  created_at, updated_at
+)
+
+-- For text-embedding-3-large (3072 dimensions)
+document_chunks_3072 (
+  -- Same structure, embedding vector(3072)
+)
+```
+
+### HNSW Indexes
+
+Fast approximate nearest neighbor search using Hierarchical Navigable Small World (HNSW) indexes:
+
+```sql
+CREATE INDEX idx_chunks_embedding_hnsw ON document_chunks
+USING hnsw (embedding vector_cosine_ops)
+WITH (m = 16, ef_construction = 64);
+```
+
+**Index parameters:**
+- `m = 16`: Number of connections per node (balance between recall and speed)
+- `ef_construction = 64`: Size of dynamic candidate list during construction
+- **For higher recall** (slower indexing): `m = 32, ef_construction = 128`
+- **For faster indexing** (lower recall): `m = 8, ef_construction = 32`
+
+### Performance Tuning
+
+Query-time parameters can be adjusted for better search quality:
+
+```sql
+-- Set at session or query level
+SET hnsw.ef_search = 100;  -- Default 40, higher = better recall
+```
+
+Expected performance: **≤ 50ms p95** for typical vector similarity queries.
+
+### Service Layer
+
+`src/services/pgvector.service.ts` implements the `VectorStorageService` interface:
+
+- `addChunks()` - Batch insert embeddings with upsert on conflict
+- `search()` - Cosine similarity search with filters (returns similarity score 0-1)
+- `deleteDocument()` - Remove all chunks for a document (cascade)
+- `getChunkRange()` - Retrieve chunks by index for context expansion
+- `getDocumentChunkCount()` - Count total chunks per document
+- `getCustomerStats()` - Aggregate statistics across customer's documents
 
 ## Common Issues
 

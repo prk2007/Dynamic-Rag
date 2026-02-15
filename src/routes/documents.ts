@@ -417,9 +417,9 @@ router.delete('/:id', authenticate, async (req, res) => {
       await s3Service.deleteFile(document.s3_key);
     }
 
-    // Delete from LanceDB (import at runtime to avoid circular deps)
-    const { lancedbService } = await import('../services/lancedb.service.js');
-    await lancedbService.deleteDocument(customerId, documentId);
+    // Delete from pgvector (import at runtime to avoid circular deps)
+    const { pgvectorService } = await import('../services/pgvector.service.js');
+    await pgvectorService.deleteDocument(customerId, documentId);
 
     // Delete from database
     await documentModel.delete(documentId, customerId);
@@ -516,9 +516,9 @@ router.post('/search', authenticate, async (req, res) => {
     });
     const queryVector = await embeddings.embedQuery(searchQuery);
 
-    // Search LanceDB
-    const { lancedbService } = await import('../services/lancedb.service.js');
-    const results = await lancedbService.search(customerId, queryVector, {
+    // Search pgvector
+    const { pgvectorService } = await import('../services/pgvector.service.js');
+    const results = await pgvectorService.search(customerId, queryVector, {
       limit: Math.min(limit, 50),
       documentId: document_id,
     });

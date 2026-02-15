@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import crypto from 'crypto';
 import { OpenAIEmbeddings } from '@langchain/openai';
 import { findCustomerByApiKey, getCustomerOpenAIKey, getCustomerConfig } from '../models/customer.js';
-import { lancedbService } from '../services/lancedb.service.js';
+import { pgvectorService } from '../services/pgvector.service.js';
 import { documentModel } from '../models/document.js';
 import { rerankerService } from '../services/reranker.service.js';
 
@@ -353,7 +353,7 @@ async function executeSearch(
   });
   const queryVector = await embeddings.embedQuery(args.query);
 
-  let results = await lancedbService.search(customerId, queryVector, {
+  let results = await pgvectorService.search(customerId, queryVector, {
     limit: Math.min(args.limit || 10, 50),
     documentId: args.document_id,
     minScore: args.min_score || 0,
@@ -417,7 +417,7 @@ async function executeSearch(
         const endIdx = result.chunk_index + contextChunks;
 
         try {
-          const contextData = await lancedbService.getChunkRange(
+          const contextData = await pgvectorService.getChunkRange(
             customerId,
             result.document_id,
             startIdx,
@@ -641,7 +641,7 @@ async function executeCompareDocuments(
           return { document: doc, results: [], error: `Document status: ${doc.status}` };
         }
 
-        const results = await lancedbService.search(customerId, queryVector, {
+        const results = await pgvectorService.search(customerId, queryVector, {
           limit: resultsPerDoc,
           documentId: docId,
         });
@@ -758,7 +758,7 @@ async function executeGetDocumentOverview(
   const chunks = await Promise.all(
     sampleIndices.map(async (idx) => {
       try {
-        const result = await lancedbService.getChunkRange(customerId, args.document_id, idx, idx);
+        const result = await pgvectorService.getChunkRange(customerId, args.document_id, idx, idx);
         return result[0] || null;
       } catch (error) {
         console.error(`Error fetching chunk ${idx}:`, error);
