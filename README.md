@@ -48,8 +48,9 @@ A production-ready **multi-tenant SaaS platform** providing Retrieval-Augmented 
 - **Cost tracking** per document with token usage metrics
 
 ### 🔍 Vector Search & RAG
-- **LanceDB** for high-performance vector storage with customer isolation
-- **Semantic search** with cosine similarity
+- **PostgreSQL with pgvector** for high-performance vector storage with customer isolation
+- **Semantic search** with cosine similarity using pgvector
+- **HNSW indexes** for fast approximate nearest neighbor search
 - **Multiple search strategies**: chunks search, broad chunks search, catalog search
 - **Advanced reranking** with RRF (Reciprocal Rank Fusion) and ML cross-encoders
 - **Hybrid search** with intelligent fallback mechanisms
@@ -58,7 +59,7 @@ A production-ready **multi-tenant SaaS platform** providing Retrieval-Augmented 
 
 ### 🏢 Multi-Tenant Architecture
 - **Complete customer isolation** with row-level security
-- **Per-customer vector stores** in isolated LanceDB tables
+- **Per-customer vector isolation** using customer_id filtering in pgvector tables
 - **Per-customer rate limiting** and quotas (configurable)
 - **Usage tracking and billing metrics** (requests, tokens, costs)
 - **Customer-specific configuration** (API keys, model selection, limits)
@@ -113,11 +114,11 @@ A production-ready **multi-tenant SaaS platform** providing Retrieval-Augmented 
 └───┬────────┬────────┬────────┬────────┬────────────────────┘
     │        │        │        │        │
     ▼        ▼        ▼        ▼        ▼
-┌────────┐┌──────┐┌────────┐┌────────┐┌──────────────────┐
-│Postgres││Redis ││ MinIO/ ││LanceDB ││   Worker         │
-│  (DB)  ││(Cache││   S3   ││(Vector)││  (BullMQ)        │
-│        ││Queue)││        ││        ││                  │
-└────────┘└──────┘└────────┘└────────┘└──────────────────┘
+┌────────┐┌──────┐┌────────┐┌──────────────────┐
+│Postgres││Redis ││ MinIO/ ││   Worker         │
+│+pgvector(Cache││   S3   ││  (BullMQ)        │
+│ (DB)   ││Queue)││        ││                  │
+└────────┘└──────┘└────────┘└──────────────────┘
     │                  │         │              │
     │                  │         │              │
     └──────────────────┴─────────┴──────────────┘
@@ -129,8 +130,8 @@ A production-ready **multi-tenant SaaS platform** providing Retrieval-Augmented 
 **Backend:**
 - **Runtime**: Node.js 18+ with TypeScript 5.7
 - **Framework**: Express.js with async/await
-- **Database**: PostgreSQL 15+ (metadata, customers, usage metrics)
-- **Vector Store**: LanceDB (document embeddings with customer isolation)
+- **Database**: PostgreSQL 15+ with pgvector extension (metadata, customers, vector embeddings)
+- **Vector Storage**: pgvector with HNSW indexes for fast similarity search
 - **Cache/Queue**: Redis 7+ with BullMQ for async jobs
 - **Storage**: MinIO (S3-compatible, AWS S3 for production)
 - **Auth**: JWT with per-customer secrets, AES-256 encryption
@@ -169,7 +170,7 @@ A production-ready **multi-tenant SaaS platform** providing Retrieval-Augmented 
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/yourusername/dynamic-rag.git
+git clone https://github.com/prk2007/dynamic-rag.git
 cd dynamic-rag
 
 # 2. Run the automated setup script
@@ -198,7 +199,7 @@ If you prefer manual control or the automated script fails:
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/yourusername/dynamic-rag.git
+git clone https://github.com/prk2007/dynamic-rag.git
 cd dynamic-rag
 
 # 2. Set up backend environment
@@ -242,7 +243,7 @@ docker-compose ps
 
 ```bash
 # 1. Clone and install dependencies
-git clone https://github.com/yourusername/dynamic-rag.git
+git clone https://github.com/prk2007/dynamic-rag.git
 cd dynamic-rag
 npm install
 
@@ -283,21 +284,25 @@ npm run dev
 **For production environments:**
 
 ```bash
-# 1. Update environment variables for production
+# 1. Clone the repository
+git clone https://github.com/prk2007/dynamic-rag.git
+cd dynamic-rag
+
+# 2. Update environment variables for production
 # - Use strong passwords
 # - Set NODE_ENV=production
 # - Configure ALLOWED_ORIGINS
 # - Use managed services (RDS, ElastiCache, S3)
 
-# 2. Build images
+# 3. Build images
 docker-compose build
 
-# 3. Start services
+# 4. Start services
 docker-compose up -d
 
-# 4. Set up SSL/TLS (use nginx/Traefik reverse proxy)
-# 5. Configure domain names
-# 6. Set up monitoring and backups
+# 5. Set up SSL/TLS (use nginx/Traefik reverse proxy)
+# 6. Configure domain names
+# 7. Set up monitoring and backups
 ```
 
 ### Quick Verification
@@ -332,7 +337,7 @@ docker-compose logs -f frontend
 
 ### Base URL
 - **Local Development**: `http://localhost:3001/api`
-- **Production**: `https://your-domain.com/api`
+- **Production**: `https://yourdomain.com/api`
 
 ### Authentication
 
@@ -949,45 +954,79 @@ CREATE TABLE usage_metrics (
 );
 ```
 
-### LanceDB Vector Storage
+### pgvector Vector Storage
 
-Vector embeddings are stored in **LanceDB** with complete customer isolation:
+Vector embeddings are stored in **PostgreSQL with pgvector extension** with complete customer isolation:
 
-**Structure:**
+**Document Chunks Tables:**
+```sql
+-- For text-embedding-3-small (1536 dimensions)
+CREATE TABLE document_chunks (
+  id TEXT PRIMARY KEY,
+  document_id UUID REFERENCES documents(id) ON DELETE CASCADE,
+  customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  embedding vector(1536),  -- OpenAI text-embedding-3-small
+  chunk_index INTEGER,
+  start_char INTEGER,
+  end_char INTEGER,
+  title TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- For text-embedding-3-large (3072 dimensions)
+CREATE TABLE document_chunks_3072 (
+  id TEXT PRIMARY KEY,
+  document_id UUID REFERENCES documents(id) ON DELETE CASCADE,
+  customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  embedding vector(3072),  -- OpenAI text-embedding-3-large
+  chunk_index INTEGER,
+  start_char INTEGER,
+  end_char INTEGER,
+  title TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- HNSW indexes for fast vector similarity search
+CREATE INDEX idx_chunks_embedding_hnsw ON document_chunks
+USING hnsw (embedding vector_cosine_ops)
+WITH (m = 16, ef_construction = 64);
+
+CREATE INDEX idx_chunks_3072_embedding_hnsw ON document_chunks_3072
+USING hnsw (embedding vector_cosine_ops)
+WITH (m = 16, ef_construction = 64);
+
+-- Indexes for customer isolation
+CREATE INDEX idx_chunks_customer_id ON document_chunks(customer_id);
+CREATE INDEX idx_chunks_3072_customer_id ON document_chunks_3072(customer_id);
 ```
-data/
-└── customers/
-    └── {customer_id}/
-        └── documents.lance/     # LanceDB table
-            ├── data files
-            └── index files
+
+**Vector Search Query Example:**
+```sql
+-- Find top 10 most similar chunks for a customer
+SELECT 
+  id, 
+  document_id, 
+  content, 
+  title,
+  1 - (embedding <=> $1::vector) AS similarity
+FROM document_chunks
+WHERE customer_id = $2
+ORDER BY embedding <=> $1::vector
+LIMIT 10;
 ```
 
-**LanceDB Schema:**
-```typescript
-{
-  id: string,              // Chunk ID
-  document_id: string,     // Document UUID
-  customer_id: string,     // Customer UUID (isolation)
-  content: string,         // Chunk text content
-  embedding: Float32Array, // 1536-dim vector (OpenAI text-embedding-3-small)
-  chunk_index: number,     // Chunk position in document
-  title: string,           // Document title
-  metadata: {              // Additional metadata
-    start_char: number,
-    end_char: number,
-    mime_type: string
-  }
-}
-```
-
-**Benefits of LanceDB:**
-- ✅ **High Performance**: Fast vector similarity search
-- ✅ **Customer Isolation**: Separate tables per customer
-- ✅ **Zero Configuration**: No extension installation required
+**Benefits of pgvector:**
+- ✅ **High Performance**: HNSW indexes provide fast approximate nearest neighbor search
+- ✅ **Customer Isolation**: Row-level security with customer_id filtering
+- ✅ **ACID Compliance**: Full transactional support
 - ✅ **Scalable**: Handles millions of vectors efficiently
-- ✅ **Cost Effective**: Local storage, no cloud costs
-- ✅ **Easy Backup**: Simple file-based backup
+- ✅ **Integrated**: All data in one PostgreSQL database
+- ✅ **Mature Ecosystem**: Battle-tested PostgreSQL reliability
+- ✅ **Easy Backup**: Standard PostgreSQL backup tools
 
 ### Database Migrations
 
@@ -1194,7 +1233,7 @@ docker-compose restart api frontend
 
 **Symptoms:**
 - Search returns no results
-- LanceDB errors
+- pgvector errors
 
 **Solutions:**
 ```bash
@@ -1202,8 +1241,13 @@ docker-compose restart api frontend
 docker-compose exec postgres psql -U rag_user -d dynamic_rag \
   -c "SELECT id, title, status, chunk_count FROM documents WHERE customer_id = '<customer-id>';"
 
-# Check LanceDB files exist
-ls -la data/customers/*/documents.lance/
+# Check if chunks exist in pgvector tables
+docker-compose exec postgres psql -U rag_user -d dynamic_rag \
+  -c "SELECT COUNT(*) FROM document_chunks WHERE customer_id = '<customer-id>';"
+
+# Check pgvector extension is installed
+docker-compose exec postgres psql -U rag_user -d dynamic_rag \
+  -c "SELECT * FROM pg_extension WHERE extname = 'vector';"
 
 # Check worker processed the document
 docker-compose logs worker | grep -i "embedding"
@@ -1351,9 +1395,9 @@ If you're still experiencing issues:
 
 1. **Check logs**: `docker-compose logs -f`
 2. **Check documentation**: See `/docs` folder
-3. **Search issues**: [GitHub Issues](https://github.com/yourusername/dynamic-rag/issues)
+3. **Search issues**: [GitHub Issues](https://github.com/prk2007/dynamic-rag/issues)
 4. **Create issue**: Include logs, error messages, and steps to reproduce
-5. **Ask community**: [GitHub Discussions](https://github.com/yourusername/dynamic-rag/discussions)
+5. **Ask community**: [GitHub Discussions](https://github.com/prk2007/dynamic-rag/discussions)
 
 ## 📖 Documentation
 
@@ -1369,7 +1413,7 @@ If you're still experiencing issues:
 
 ### Current Status: ✅ Production Ready
 
-The Dynamic RAG system is production-ready with core features fully implemented. See our [Jira board](https://prashant-khurana.atlassian.net/browse/KAN) for detailed progress tracking.
+The Dynamic RAG system is production-ready with core features fully implemented.
 
 ### Completed Features ✅
 
@@ -1378,7 +1422,7 @@ The Dynamic RAG system is production-ready with core features fully implemented.
 - ✅ Authentication with email verification
 - ✅ JWT with per-customer secrets
 - ✅ Document upload and processing pipeline
-- ✅ LanceDB vector storage integration
+- ✅ PostgreSQL with pgvector extension integration
 - ✅ OpenAI embeddings with customer API keys
 - ✅ React frontend with beautiful UI
 
@@ -1399,7 +1443,7 @@ The Dynamic RAG system is production-ready with core features fully implemented.
 
 ### In Progress 🚧
 
-**Phase 3: Production Ready** ([KAN-10](https://prashant-khurana.atlassian.net/browse/KAN-10))
+**Phase 3: Production Ready**
 - 🚧 ML cross-encoder reranking with transformers.js
 - 🚧 Enhanced monitoring and metrics dashboards
 - 🚧 Performance benchmarking and optimization
@@ -1409,43 +1453,43 @@ The Dynamic RAG system is production-ready with core features fully implemented.
 
 **Near Term (Next 2-4 weeks)**
 
-**OAuth Integration** ([KAN-8](https://prashant-khurana.atlassian.net/browse/KAN-8))
+**OAuth Integration**
 - 🔜 Google OAuth signup/login
 - 🔜 Microsoft OAuth integration
 - 🔜 GitHub OAuth integration
 - 🔜 Social account linking
 
-**Bulk Operations** ([KAN-9](https://prashant-khurana.atlassian.net/browse/KAN-9))
+**Bulk Operations**
 - 🔜 Bulk document upload
 - 🔜 Bulk document deletion
 - 🔜 Bulk metadata updates
 - 🔜 Batch processing optimizations
 
-**Enhanced Error Handling** ([KAN-7](https://prashant-khurana.atlassian.net/browse/KAN-7))
+**Enhanced Error Handling**
 - 🔜 Specific error codes for all errors
 - 🔜 Error code documentation
 - 🔜 User-friendly error messages
 - 🔜 Troubleshooting guides
 
-**Multi-Model Support** ([KAN-4](https://prashant-khurana.atlassian.net/browse/KAN-4))
+**Multi-Model Support**
 - 🔜 Multiple embedding models (Cohere, HuggingFace, etc.)
 - 🔜 Multiple LLM providers (Anthropic, Google, etc.)
 - 🔜 Per-customer model selection
 - 🔜 Model performance comparison
 
-**Backend Enhancements** ([KAN-6](https://prashant-khurana.atlassian.net/browse/KAN-6))
+**Backend Enhancements**
 - 🔜 Use customer's OpenAI keys for all operations
 - 🔜 API key rotation support
 - 🔜 Usage quota enforcement
 - 🔜 Cost alerts and limits
 
-**Documentation** ([KAN-5](https://prashant-khurana.atlassian.net/browse/KAN-5))
+**Documentation**
 - ✅ **Completed!** - Comprehensive README update
 - 🔜 API documentation with examples
 - 🔜 Architecture decision records (ADRs)
 - 🔜 Video tutorials
 
-**Phase 4: Deployment** ([KAN-13](https://prashant-khurana.atlassian.net/browse/KAN-13))
+**Phase 4: Deployment**
 - 🔜 Production deployment guide
 - 🔜 Kubernetes manifests
 - 🔜 Monitoring and alerting setup
@@ -1488,9 +1532,9 @@ The Dynamic RAG system is production-ready with core features fully implemented.
 ### Community Requested Features
 
 Have a feature request? 
-- 💡 [Open a feature request](https://github.com/yourusername/dynamic-rag/issues/new?template=feature_request.md)
-- 💬 [Join the discussion](https://github.com/yourusername/dynamic-rag/discussions)
-- 🗳️ [Vote on existing requests](https://github.com/yourusername/dynamic-rag/issues?q=is%3Aissue+is%3Aopen+label%3Aenhancement)
+- 💡 [Open a feature request](https://github.com/prk2007/dynamic-rag/issues/new?template=feature_request.md)
+- 💬 [Join the discussion](https://github.com/prk2007/dynamic-rag/discussions)
+- 🗳️ [Vote on existing requests](https://github.com/prk2007/dynamic-rag/issues?q=is%3Aissue+is%3Aopen+label%3Aenhancement)
 
 ### Release Schedule
 
@@ -1507,7 +1551,7 @@ We welcome contributions from the community! Whether it's bug fixes, new feature
 
 1. **Fork the repository**
    ```bash
-   git clone https://github.com/yourusername/dynamic-rag.git
+   git clone https://github.com/prk2007/dynamic-rag.git
    cd dynamic-rag
    git checkout -b feature/your-feature-name
    ```
@@ -1592,9 +1636,9 @@ chore: Update dependencies or config
 
 ### Questions?
 
-- 💬 [Start a discussion](https://github.com/yourusername/dynamic-rag/discussions)
+- 💬 [Start a discussion](https://github.com/prk2007/dynamic-rag/discussions)
 - 📧 Email the maintainers
-- 💡 [Open an issue](https://github.com/yourusername/dynamic-rag/issues)
+- 💡 [Open an issue](https://github.com/prk2007/dynamic-rag/issues)
 
 ## 📄 License
 
@@ -1621,12 +1665,13 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 This project is built on the shoulders of giants:
 
 **Core Technologies:**
-- [LanceDB](https://lancedb.com/) - High-performance vector database
 - [PostgreSQL](https://www.postgresql.org/) - Powerful open-source database
+- [pgvector](https://github.com/pgvector/pgvector) - Vector similarity search for PostgreSQL
 - [OpenAI](https://openai.com/) - Embeddings and AI models
 - [React](https://react.dev/) - UI framework
 - [Express](https://expressjs.com/) - Web framework
 - [BullMQ](https://docs.bullmq.io/) - Job queue system
+- [MinIO](https://min.io/) - High-performance object storage
 
 **Inspiration:**
 - Originally forked from [lance-mcp](https://github.com/adiom-data/lance-mcp)
@@ -1649,9 +1694,9 @@ This project is built on the shoulders of giants:
 - 🏗️ [Architecture](docs/ARCHITECTURE.md) - System design
 
 **Community Support:**
-- 💬 [GitHub Discussions](https://github.com/yourusername/dynamic-rag/discussions) - Ask questions
-- 🐛 [GitHub Issues](https://github.com/yourusername/dynamic-rag/issues) - Report bugs
-- 💡 [Feature Requests](https://github.com/yourusername/dynamic-rag/issues/new?template=feature_request.md)
+- 💬 [GitHub Discussions](https://github.com/prk2007/dynamic-rag/discussions) - Ask questions
+- 🐛 [GitHub Issues](https://github.com/prk2007/dynamic-rag/issues) - Report bugs
+- 💡 [Feature Requests](https://github.com/prk2007/dynamic-rag/issues/new?template=feature_request.md)
 
 **Professional Support:**
 - 📧 Email: support@yourdomain.com
@@ -1696,7 +1741,7 @@ Instead:
 
 If you find this project useful, please consider giving it a star! ⭐
 
-[![Star History Chart](https://api.star-history.com/svg?repos=yourusername/dynamic-rag&type=Date)](https://star-history.com/#yourusername/dynamic-rag&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=prk2007/dynamic-rag&type=Date)](https://star-history.com/#prk2007/dynamic-rag&Date)
 
 ---
 
@@ -1706,6 +1751,6 @@ If you find this project useful, please consider giving it a star! ⭐
 
 Made with ❤️ by the Dynamic RAG Team
 
-[Report Bug](https://github.com/yourusername/dynamic-rag/issues) · [Request Feature](https://github.com/yourusername/dynamic-rag/issues) · [Documentation](docs/)
+[Report Bug](https://github.com/prk2007/dynamic-rag/issues) · [Request Feature](https://github.com/prk2007/dynamic-rag/issues) · [Documentation](docs/)
 
 </div>
