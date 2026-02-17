@@ -33,6 +33,9 @@ RUN npm install --production --omit=dev
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
 
+# Copy SQL schema (tsc doesn't copy non-TS files)
+COPY src/database/schema.sql ./dist/database/schema.sql
+
 # Create data directories
 RUN mkdir -p /app/data/customers /app/data/default
 
